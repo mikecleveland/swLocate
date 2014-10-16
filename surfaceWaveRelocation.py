@@ -5,6 +5,8 @@
 	surfaceWaveRelocation.py version 1.0 (original 07 Mar, 2014)
 				
 		by Mike Cleveland
+	
+	Notes:
 
 '''
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
@@ -337,7 +339,7 @@ def prepData(dataStruct):
 				ok = True
 			
 				##~~~ Check if waveform is acceptable ~~~##
-				ok,shortTime,longTime = checkWaveform(aTrace,settings)
+				ok,shortTime,longTime = checkWaveform(aTrace)
 			
 				##~~~ Prepare waveform ~~~##
 				if ok:
@@ -360,7 +362,16 @@ def prepData(dataStruct):
 			##~~~ Write waveforms to HDF5 file ~~~##			
 			print 'Saving ' + eventID
 			save2HDF5(dataStruct)		
-def checkWaveform(trace,settings):
+def checkWaveform(trace):
+	'''
+	Checks to a specific trace for see if it qualifies based on:
+		1. Quality rating
+		2. Desired channel
+		3. Length of time series
+	'''
+	
+	global settings
+
 	##~~~ Check if waveform is acceptable ~~~##
 	ok = True
 	
@@ -587,8 +598,8 @@ def getOptimalShift(aTrace,bTrace):
 	## Normalized and Unnormalized Correlation Coefficient
 	aSum = np.sum(aSeis*aSeis); bSum = np.sum(bSeis*bSeis)
 	ccNorm = maxCC / (np.sqrt(aSum)*np.sqrt(bSum))
-	ccUnNorm = maxCC / np.sqrt(aSum)
-	ccUnNormInv = maxCC / np.sqrt(bSum)
+	ccUnNorm = maxCC / aSum
+	ccUnNormInv = maxCC / bSum
 	
 # 	## Plot for QC ##
 # 	tempCC = np.append(ccor[halfpts:],ccor[:halfpts])
@@ -800,80 +811,24 @@ def doIteration(myEventArray,ddArray):
 
 	if (nEvents < 1) or (nDiffs == 0): return
 
-	##~~~ The first call is to compute the optimal work vector size ~~~##	
-	'''
-	nCols = nEvents * 4;
-	nRows = nDiffs + nCols + 4;
-	lda = nRows;
-	ldb = nRows;
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~ A. The first call is to compute the optimal work vector size ~~~##	
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	nCols = nEvents * 4; nRows = nDiffs + nCols + 4; lda = nRows; ldb = nRows
 
-	x = (float *) calloc(nRows, sizeof(float));
-	b = (float *) calloc(nRows, sizeof(float));
-	p = (float *) calloc(nRows, sizeof(float));
-	A = (float *) calloc(nRows*nCols,sizeof(float));
-	s = (float *) calloc(nCols, sizeof(float));
-	Acopy = (float *) calloc(nRows*nCols,sizeof(float));
+	nrhs = 1; lwork = -1; rcond = 0.01	# same as cond ??
 
-	rcond = 0.01;
-	lwork = -1;
-
-	sgelss_(&nRows,&nCols,&nrhs,A,&lda,b,&ldb,s,&rcond,&rank,&optWorkSize,&lwork,&info);
-
-	lwork = (int) optWorkSize;
-	work  = (float *) calloc(lwork, sizeof(float));
-
-	# Conversion of sgelss Fortran to Python:
-	# a = matrix [M,N]
-	# b = matrix [LDB,NRHS]
-	# v = output a, matrix [M,N]
-	# x = output b, matrix [LDB,NRHS]
-	# s = S
-	# rank = RANK
-	# work = WORK
-	# info = INFO
-	# cond ?= RCOND
-	# lwork = LWORK
-	# 
-	# M -> goes into a
-	# N -> goes into a
-	# NRHS -> goes into b
-	# A ?= a,v
-	# LDA -> goes into a,v
-	# B ?= b,x 
-	# LDB -> goes into b,x
-	# S = s
-	# RCOND ?= cond
-	# RANK = rank
-	# WORK = work
-	# LWORK = lwork
-	# INFO = info
-
-	Previous A was a linearized [M,N] matrix. So,
-		A_new[r][c] = A_old[c*nR + r]
-	'''
-
-	nCols = nEvents * 4
-	nRows = nDiffs + nCols + 4
-	lda = nRows
-	ldb = nRows
-
-	nrhs = 1
-	lwork = -1
-	rcond = 0.01	# same as cond ??
-
-	a = np.zeros([nRows,nCols])
+	A = np.zeros([nRows,nCols])
 	b = np.zeros([ldb,nrhs])
-	x = np.zeros(nRows)
 	p = np.zeros(nRows)
-	Acopy = np.zeros([nRows,nCols])
 
-	[A,b,s,rank,lwork,info] = lapack.clapack.sgelss(a,b,rcond,lwork) 
-
-	work  = np.zeros(lwork)
+	[A,b,s,rank,lwork,info] = lapack.clapack.sgelss(A,b,rcond,lwork) 
 
 	theInitialDDResidualsText = 'Initial DD Residuals\nIndex DD_Obs DD_Pred DD_Obs-DD_Pred\n'
 
-	##~~~ Print out the initial DD's ~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~ B. Print out the initial DD's ~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
 	for i in np.arange(0,nDiffs):
 		dd = ddArray[i]
 		theInitialDDResidualsText += ('%03d %9.3f %9.3f %9.3f\n' % \
@@ -881,26 +836,30 @@ def doIteration(myEventArray,ddArray):
 		
 	theInitialDDResidualsText += '************************************************\n'
 
-	##~~~ Set the initial data weights ~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~ C. Set the initial data weights ~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
 	for i in np.arange(0,nDiffs):
 	
 		ddArray[i].setWeight()
 
-	##~~~ Iteratively reweight the dd's in the inversion to decrease the impact of outliers ~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~ D. Iteratively reweight the dd's in the inversion ~~~##
+	##~~~		to decrease the impact of outliers			~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
 	nIter = 3
 	for iter in np.arange(0,nIter):
 
-		##~~~ zero the arrays ~~~##
-		b = np.zeros([ldb,nrhs])
-		x = np.zeros(nRows)
+		##~~~ D.1. Zero the arrays ~~~##
 		A = np.zeros([nRows,nCols])
-		work  = np.zeros(lwork)
+		b = np.zeros([ldb,nrhs])
+		x = np.zeros([ldb,nrhs])
 
-		##~~~ Build the inversion matrix and vectors ~~~##
+		##~~~ D.2. Build the inversion matrix and vectors ~~~##
 		for row in np.arange(0,nDiffs):
 			
 			dd = ddArray[row]
-			##~~~ Get the indices of the events in this dd ~~~##
+			
 			i01 = myEventArray.eventIndex(dd.aEvent)
 			i02 = myEventArray.eventIndex(dd.bEvent)
 			
@@ -910,11 +869,8 @@ def doIteration(myEventArray,ddArray):
              b[row] += [[dd firstEvent]  originTimeShift] -
              [[dd secondEvent] originTimeShift]; '''
 
-			x[row] = b[row] # save for comparison
-			
 			derivatives = dd.derivatives
 						
-			# Old: A[col*nRows + row]
 			col = i01 * 4
 			A[row][col] =  derivatives[0] * dd.weight
 			col += 1
@@ -932,64 +888,44 @@ def doIteration(myEventArray,ddArray):
 			A[row][col] = -derivatives[6] * dd.weight
 			col += 1
 			A[row][col] = -derivatives[7] * dd.weight
-		
-		##~~~ The minimum length constraint ~~~##
+				
+		##~~~ D.3. The minimum length constraint ~~~##
 		row = nDiffs
 
 		for i in np.arange(0,nCols):
-		
-			''' Old: A[i*nRows + i + row] '''
 			A[row+i][i] = settings['minLengthWt']
 
-		##~~~ The constant centroid constraint ~~~##
+		##~~~ D.4. The constant centroid constraint ~~~##
 		row += nCols
 
 		for i in np.arange(0,nEvents):
-			'''
-			Old:	A[col*nRows + row]
-					A[(col+1)*nRows + row + 1]
-					A[(col+2)*nRows + row + 2]
-					A[(col+3)*nRows + row + 3]
-			'''
 			col = 4 * i
 			A[row][col]     = settings['zeroCentroidWt']
 			A[row+1][col+1] = settings['zeroCentroidWt']
 			A[row+2][col+2] = settings['zeroCentroidWt']
 			A[row+3][col+3] = settings['zeroCentroidWt']
-
-		##~~~ Make a copy of the A matrix ~~~##
-		'''
-		Old: I am not sure why the original code only looped over nCols
-		for i in np.arange(0,nCols):
-			Acopy[i] = A[i]
-		'''
-		Acopy = deepcopy(A)
 		
-		'''
-		sgelss_(&nRows,&nCols,&nrhs,&A[0],&lda,&b[0],&ldb,&s[0],&rcond,&rank,&work[0],&lwork,&info);
-		'''
-		
-		[A,b,s,rank,work,info] = lapack.clapack.sgelss(A,b,rcond,lwork)
+		##~~~ D.5. Perform inversion of A matrix ~~~##
+		[V,x,s,rank,work,info] = lapack.clapack.sgelss(A,b,rcond,lwork)
 
-		##~~~ compute the new weights based on the residuals ~~~##
-		##~~~ I consider anything fitting within 2 seconds to be a good observation
-		##~~~ 	perhaps this should be a multiplicative factor, since the original weight 
-		##~~~ 	may reflect the data quality.
+		##~~~ D.6. Compute the new weights based on the residuals ~~~##
+		'''
+		I consider anything fitting within 2 seconds to be a good observation perhaps
+			this should be a multiplicative factor, since the original weight may reflect
+			the data quality.
+		'''
 		unweightedMisfit = 0
 		weightedMisfit = 0
 		for i in np.arange(0,nDiffs):
 
 			dd = ddArray[i]
-			predicted = 0
-			for j in np.arange(0,nCols):
-				''' Old: predicted += (Acopy[j*nRows + i] * b[j]) '''
-				predicted += (Acopy[i][j] * b[j])
-
+			
+			predicted = np.dot(A[i], x[:nCols])
 			p[i] = predicted
 			
-			##~~~ Acopy has the weights built in. I want the weight computed from the raw 
-			##~~~ 	dd time misfit, so I remove the weights here
-			absMisfit  = np.abs(predicted - x[i])
+			##~~~ A has the weights built in. I want the weight computed from the raw 
+			##~~~ 	DD time misfit, so I remove the weights here
+			absMisfit  = np.abs(predicted - b[i])
 			weightedMisfit += absMisfit*absMisfit
 			if dd.weight != 0.0:
 				absMisfit /= dd.weight
@@ -1011,9 +947,11 @@ def doIteration(myEventArray,ddArray):
 
 				dd.weight = wt
 
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
 	##~~~ End of the iteratively reweighted inversion ~~~##
-	wtMisfitTextField = np.sqrt(weightedMisfit/nDiffs)
-	unwtMisfitTextField = np.sqrt(unweightedMisfit/nDiffs)
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	wtMisfitText = np.sqrt(weightedMisfit/nDiffs)
+	unwtMisfitText = np.sqrt(unweightedMisfit/nDiffs)
 	
 	theSingularValuesText = ('Singular Values (Rank:%03d)\n' % rank)
 	for i in np.arange(0,nCols):
@@ -1025,7 +963,7 @@ def doIteration(myEventArray,ddArray):
 
 		j = 4 * i
 		theLocationPerturbationsText += ('%03d %9.3f %9.3f %9.3f %9.3f\n' % \
-                                     (i+1, b[j],b[j+1],b[j+2],b[j+3]))
+                                     (i+1, x[j], x[j+1], x[j+2], x[j+3]))
     	
 	''' UPDATE THE EVENTS
      note the scaling of the longitude value. I am treating the problem
@@ -1041,8 +979,8 @@ def doIteration(myEventArray,ddArray):
 		j = 4 * i
 		
 		event  = myEventArray.events[i]
-		newLat = event.evLat - (b[j]  /settings['gc2km'])
-		newLon = event.evLon + (b[j+1]/settings['gc2km'])
+		newLat = event.evLat - (x[j]  /settings['gc2km'])
+		newLon = event.evLon + (x[j+1]/settings['gc2km'])
 		
 		##~~~ Should compute the distance it has moved here ~~~##
 		(distI,azI,baz) = gps2DistAzimuth(event.evLatInitial,event.evLonInitial,newLat,newLon)
@@ -1056,25 +994,27 @@ def doIteration(myEventArray,ddArray):
 			(i+1,event.originStr,event.evLatInitial,event.evLonInitial, \
 			event.evLat,event.evLon,newLat,newLon, \
 			distI,azI, \
-			(event.originTimeShift + b[j+3]),dist,az ))
+			(event.originTimeShift + x[j+3]),dist,az ))
 
 		##~~~ Update the locations in the event array ~~~##
 		event.updateOrigin(newLat,newLon)
 		event.evDepth = 0.0
 		##~~ Update the origin timeShift in the event array ~~~##
-		event.originTimeShift += b[j+3]
+		event.originTimeShift += x[j+3]
 		
 # ->	[myController mapEvents];
 
 	
 	theDDInfoText = 'Index Observed Predicted (obs-pred) weight DD_Obs DD_Pred:\n'
     
+	##~~~~~~~~~~~~~~~~~~~~~~~##
 	##~~~ UPDATE THE DD's ~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~##
 	for i in np.arange(0,nDiffs):
 
 		dd = ddArray[i]
 		theDDInfoText += ('%03d %9.3f %9.3f %9.3f %8.3f %9.3f %9.3f\n' % \
-							(i+1,x[i],p[i],(x[i]-p[i]),dd.weight,dd.dtObs,dd.dtPredicted))
+							(i+1,b[i],p[i],(b[i]-p[i]),dd.weight,dd.dtObs,dd.dtPredicted))
         
 		# Commented out by CJA in original code
 		#value = -([[dd firstEvent] originTimeShift] - [[dd secondEvent] originTimeShift]);
@@ -1092,7 +1032,8 @@ def doIteration(myEventArray,ddArray):
 	print theLocationsText
 	
 	printInversionResults(theInitialDDResidualsText,theSingularValuesText, \
-							theLocationPerturbationsText,theDDInfoText,theLocationsText)
+							theLocationPerturbationsText,theDDInfoText,theLocationsText, \
+							wtMisfitText,unwtMisfitText)
 def buildDifferenceArray(ddArray,eventA,eventB,weight,lag,nCC,unCC,powerA,powerB):
 	global settings
 	
@@ -1120,7 +1061,7 @@ def buildDifferenceArray(ddArray,eventA,eventB,weight,lag,nCC,unCC,powerA,powerB
 	theDD.powerSignalB = powerB
 	
 	ddArray.append(theDD)
-def printInversionResults(initDDResid,singValues,locPert,ddInfo,finalLocations):
+def printInversionResults(initDDResid,singValues,locPert,ddInfo,finalLocations,wtMisfit,unwtMisfit):
 	global settings
 	
 	currentTime = str(datetime.datetime.now())
@@ -1137,7 +1078,7 @@ def printInversionResults(initDDResid,singValues,locPert,ddInfo,finalLocations):
 	else:	
 		f = open(fname,'w')		
 	f.write(currentTime)
-	f.write('')
+	f.write('\nwtMisfit: %0.6f, unwtMisfit: %0.6f\n' % (wtMisfit,unwtMisfit))
 	f.write(initDDResid)
 	f.write('\n')
 	f.close()
@@ -1149,7 +1090,7 @@ def printInversionResults(initDDResid,singValues,locPert,ddInfo,finalLocations):
 	else:	
 		f = open(fname,'w')		
 	f.write(currentTime)
-	f.write('')
+	f.write('\nwtMisfit: %0.6f, unwtMisfit: %0.6f\n' % (wtMisfit,unwtMisfit))
 	f.write(singValues)
 	f.write('\n')
 	f.close()
@@ -1161,7 +1102,7 @@ def printInversionResults(initDDResid,singValues,locPert,ddInfo,finalLocations):
 	else:	
 		f = open(fname,'w')		
 	f.write(currentTime)
-	f.write('')
+	f.write('\nwtMisfit: %0.6f, unwtMisfit: %0.6f\n' % (wtMisfit,unwtMisfit))
 	f.write(locPert)
 	f.write('\n')
 	f.close()
@@ -1173,7 +1114,7 @@ def printInversionResults(initDDResid,singValues,locPert,ddInfo,finalLocations):
 	else:	
 		f = open(fname,'w')		
 	f.write(currentTime)
-	f.write('')
+	f.write('\nwtMisfit: %0.6f, unwtMisfit: %0.6f\n' % (wtMisfit,unwtMisfit))
 	f.write(ddInfo)
 	f.write('\n')
 	f.close()
@@ -1185,7 +1126,7 @@ def printInversionResults(initDDResid,singValues,locPert,ddInfo,finalLocations):
 	else:	
 		f = open(fname,'w')		
 	f.write(currentTime)
-	f.write('')
+	f.write('\nwtMisfit: %0.6f, unwtMisfit: %0.6f\n' % (wtMisfit,unwtMisfit))
 	f.write(finalLocations)
 	f.write('\n')
 	f.close()	
@@ -1418,29 +1359,37 @@ def bDataSet(event):
 def save2HDF5(dataStruct):
 	global settings
 	
+# 	traceObject = dataStruct.waveforms['LHZ']
+# 	ps.save2HDF5(traceObject)
+	
 	ok = False
-		
+	
 	for aChan in dataStruct.waveforms:
-		for aTrace in dataStruct.waveforms[aChan]:
-			
-			if not ok:
-				ok = True
+
+		if isinstance(dataStruct.waveforms[aChan][0],ps.Trace):
+			for aTrace in dataStruct.waveforms[aChan]:
 				
 				eventName = aTrace.origin.strftime('E%Y-%m-%d-%H-%M-%S')
-	
 				fname = settings['path'] + '/'+ eventName + '.h5'
-
-				if os.path.isfile(fname):
-					os.remove(fname)
-					hdf5File = h5py.File(fname, 'w')
-				else:
-					hdf5File = h5py.File(fname, 'w')
+# 				fname = eventName + '.h5'
 				
-			save_a_HDF5(aTrace,hdf5File)
+				if not ok:
+					ok = True
+										
+					if os.path.isfile(fname):
+						os.remove(fname)
+						hdf5File = h5py.File(fname, 'w')
+					else:
+						hdf5File = h5py.File(fname, 'w')
+				
+				save_a_HDF5(aTrace,hdf5File)
 	
 	k = hdf5File.require_group('Settings')		
 	for aSetting in settings:
-		k.attrs[aSetting] = settings[aSetting]					
+		k.attrs[aSetting] = settings[aSetting]
+
+	#~~ Close HDF5 objects ~~#
+	hdf5File.close()				
 def save_a_HDF5(trace,fname):
 	try:
 		g = fname.require_group(trace.channel)
@@ -1578,7 +1527,7 @@ dataStruct.settings['gc2km'] = 111.19
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
 ##~~~ Work Flow (which steps to include) ~~~##
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
-workFlow = [2,3,4,6]
+workFlow = [1,2,3,4,6]
 
 global settings
 settings = dataStruct.settings
