@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*- 
 
 '''
-	surfaceWaveRelocation.py version 1.0 (original 07 Mar, 2014)
+	surfaceWaveRelocation.py version 1.1 (original 07 Mar, 2014)
 				
 		by Mike Cleveland
 	
