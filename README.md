@@ -45,14 +45,14 @@ II.c. pickle - It is kind of silly that I store things as both h5py and pickle, 
 					is an easy way to dump dictionaries and arrays after data has been
 					read in and processed.
 
-III. Parameters
+##III. Parameters##
 The user defined parameters are all help within the dataStruct.settings dictionary. This
 dictionary is made global so that all the functions can see it.
 
-##~~~ Set Path ~~~##
-dataStruct.settings['path'] = '/Users/mcleveland/Documents/Projects/Menard/EventSearch/Events/Graded/test2'
+~~~ Set Path ~~~
+#dataStruct.settings['path'] = '/Users/mcleveland/Documents/Projects/Menard/EventSearch/Events/Graded/test2'#
 	- Define where the data are located
-dataStruct.settings['pathPrefix'] = '/E*'
+#dataStruct.settings['pathPrefix'] = '/E*'#
 	- The leading characters to the folders containing the data. I personally use "/E*" for
 		folders suchs as "E1995-09-15-04-50-20"
 dataStruct.settings['dataSubDir'] = 'Dsp'
@@ -65,20 +65,20 @@ dataStruct.settings['fileSuffix'] = '.sac'
 		use a wildcard, like 'LH*'. I just use this so that it only tries to read in SAC
 		files, instead of some other type of file held within the folder.
 
-##~~~ HDF5 file save location ~~~##
+~~~ HDF5 file save location ~~~
 directory = 'Waveforms/'
 	- I think this is deprecated. It should save the HDF5 files to the same location
 		as all of your event folders, but with '.h5' appended
 
-##~~~ Define Period Band ~~~##
-dataStruct.settings['shortPeriod'] = 30
-dataStruct.settings['longPeriod']  = 80
+~~~ Define Period Band ~~~
+#dataStruct.settings['shortPeriod'] = 30
+dataStruct.settings['longPeriod']  = 80#
 	- Self explanatory
 
-##~~~ Define Group Velocity Range (km/s) ~~~##
-	# Rayleigh #
-dataStruct.settings['rGvLow'] = 3
-dataStruct.settings['rGvHi']  = 5
+~~~ Define Group Velocity Range (km/s) ~~~
+	 Rayleigh 
+#dataStruct.settings['rGvLow'] = 3
+dataStruct.settings['rGvHi']  = 5#
 	- Self explanatory. This is used to window the waveforms.
 
 	# Love #
