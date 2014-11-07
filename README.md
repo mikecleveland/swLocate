@@ -7,7 +7,7 @@ by Mike Cleveland (07 Nov 2014)
 
 
 
-I. Introduction
+##I. Introduction##
 The script is broken down into different parts, so you can choose exactly what is run
 in the "workFlow" array. The basic steps are:
 
@@ -31,7 +31,7 @@ IV. Workflow
 	- The workflow of the code.
 
 
-II. Modules
+##II. Modules##
 II.a. pySACio - This is a waveform handling module that I wrote. It is included in the 
 					gitHub set. This needs to be improved, but does the basics. I basically
 					re-packages an Obspy trace into a format I like, then has some basic
@@ -50,9 +50,9 @@ The user defined parameters are all help within the dataStruct.settings dictiona
 dictionary is made global so that all the functions can see it.
 
 ~~~ Set Path ~~~
-#dataStruct.settings['path'] = '/Users/mcleveland/Documents/Projects/Menard/EventSearch/Events/Graded/test2'#
+dataStruct.settings['path'] = '/Users/mcleveland/Documents/Projects/Menard/EventSearch/Events/Graded/test2'
 	- Define where the data are located
-#dataStruct.settings['pathPrefix'] = '/E*'#
+dataStruct.settings['pathPrefix'] = '/E*'
 	- The leading characters to the folders containing the data. I personally use "/E*" for
 		folders suchs as "E1995-09-15-04-50-20"
 dataStruct.settings['dataSubDir'] = 'Dsp'
@@ -71,64 +71,65 @@ directory = 'Waveforms/'
 		as all of your event folders, but with '.h5' appended
 
 ~~~ Define Period Band ~~~
-#dataStruct.settings['shortPeriod'] = 30
-dataStruct.settings['longPeriod']  = 80#
+dataStruct.settings['shortPeriod'] = 30
+dataStruct.settings['longPeriod']  = 80
 	- Self explanatory
 
 ~~~ Define Group Velocity Range (km/s) ~~~
 	 Rayleigh 
-#dataStruct.settings['rGvLow'] = 3
-dataStruct.settings['rGvHi']  = 5#
+dataStruct.settings['rGvLow'] = 3
+dataStruct.settings['rGvHi']  = 5
 	- Self explanatory. This is used to window the waveforms.
 
-	# Love #
+	 Love 
 dataStruct.settings['gGvLow'] = 3
 dataStruct.settings['gGvHi']  = 5
 	- This has not been implemented yet, however, it looks like the Love wave group
 		velocity is close enough to the Rayleigh.
 	
-##~~~ Define Slowness ~~~##
+~~~ Define Slowness ~~~
 dataStruct.settings['slowness'] = 0.24
 	- Self explanatory
 
-##~~~ Define Quality (False if not defined) ~~~##
+~~~ Define Quality (False if not defined) ~~~
 dataStruct.settings['quality'] = 2
 	- Minimum acceptable waveform quality. You can also use False if you don't want to use
 		this.
 
-##~~~ Define Channel ~~~##
+~~~ Define Channel ~~~
 dataStruct.settings['channels'] = ['lhz','lht']
 	- Channels that are read in. I don't think this is case-sensitive.
 
 	- Below are all the linking parameters.
-##~~~ Define linking distance (km) ~~~##
+~~~ Define linking distance (km) ~~~
 dataStruct.settings['linkDist'] = 120
 
-##~~~ Define minimum acceptable CC coefficient ~~~##
+~~~ Define minimum acceptable CC coefficient ~~~
 dataStruct.settings['minCC'] = 0.90
 
-##~~~ Define minimum number of links ~~~##
+~~~ Define minimum number of links ~~~
 dataStruct.settings['minLinks'] = 12
 
-##~~~ Define minimum azimuthal coverage of links (degrees) ~~~##
+~~~ Define minimum azimuthal coverage of links (degrees) ~~~
 dataStruct.settings['minAZ'] = 50
 
 	- Below are weighting values for the inversion
-##~~~ Weight by distance (True/False) ~~~##
+~~~ Weight by distance (True/False) ~~~
 dataStruct.settings['weightByDistance'] = False
 
-##~~~ Define zero centroid weight ~~~##
+~~~ Define zero centroid weight ~~~
 dataStruct.settings['zeroCentroidWt'] = 0.000
 
-##~~~ Define minimum length weight ~~~##
+~~~ Define minimum length weight ~~~
 dataStruct.settings['minLengthWt'] = 0.000
 
-##~~~ Define GCarc to km conversion ~~~##
+~~~ Define GCarc to km conversion ~~~
 dataStruct.settings['gc2km'] = 111.19
 	- Self explanatory
 
 
-IV. Workflow
+
+##IV. Workflow##
 1. QC, Prepare, and Save *ALL* Data to HDF5 file 
 	This function reads in all of the waveforms, checks to see if they meet basic quality
 	standards (e.g. desired channel(s), quality), processes the waveforms (e.g. filter, 
