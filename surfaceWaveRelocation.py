@@ -2,11 +2,11 @@
 # -*- coding: utf-8 -*- 
 
 '''
-	surfaceWaveRelocation.py version 1.1 (original 07 Mar, 2014)
+	surfaceWaveRelocation.py version 1.0 (original 07 Mar, 2014)
 				
 		by Mike Cleveland
 	
-	Last edit: 24 Oct 2014 (KMC)
+	Last edit: 06 Nov 2014 (KMC)
 
 '''
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
@@ -29,8 +29,13 @@ from scipy.linalg import lapack
 import datetime
 
 from obspy.core.util import gps2DistAzimuth
+## The user is urged to install: http://geographiclib.sourceforge.net/
+#	Without this package, gps2DistAzimuth uses Vincenty’s Inverse formulae which can
+#	produce errors 
 
 import pickle
+
+import timeit
 
 import pdb	# Debug with pdb.set_trace()
 
@@ -310,6 +315,38 @@ class DDObservation(object):
 	
 		return wt
 
+class CCLog():
+	def __init__(self,fileName='ccLog.txt'):
+		"Initialize."
+
+		self.ccLog = open(fileName,"w")
+		header = 'Count Net  Sta Loc Chan:   staLat   staLon |   aEvLat   aEvLon,   bEvLat   bEvLon | '
+		header = header + 'aGCarc   bGCarc,     aAz     bAz |dtObs dtPred (dtObs-dtPred)|'
+		header = header + ' wt normCC unnormCC unnormCC_inverse | powerSignalA powerSignalB'
+		print >>self.ccLog, header	
+	def linking(self,aEventName,bEventName):
+		linkingPhrase = 'Linking {} and {}'.format(aEventName,bEventName)
+		print >>self.ccLog, linkingPhrase
+		print linkingPhrase		
+	def data(self,count,aTrace,bTrace,dtObs,dtPredicted,weight,nCC,unCC,unCC_i,powerA,powerB):
+		 network = aTrace.network; station = aTrace.station
+		 location= aTrace.staLocation; channel = aTrace.channel
+		 
+		 eventID = '   %03d %2s %5s %2s %3s : ' \
+				% (count,network,station,location,channel)
+		 staLoc = '%8.3f %8.3f | ' % (aTrace.staLat,aTrace.staLon)
+		 eventLocs = '%8.3f %8.3f, %8.3f %8.3f | ' \
+				% (aTrace.evLat,aTrace.evLon,bTrace.evLat,bTrace.evLon)
+		 distAz = '%7.3f %7.3f, %7.3f %7.3f | ' \
+				% (aTrace.gcarc,bTrace.gcarc,aTrace.az,bTrace.az)
+		 dtValue = '%6.2f %6.2f %6.2f | ' % (dtObs,dtPredicted,(dtObs-dtPredicted))
+		 results = '%0.3f %5.3f %5.3f %5.3f | ' % (weight,nCC,unCC,unCC_i)
+		 results = results + '%9.6e %9.6e' % (powerA,powerB)
+
+		 print >>self.ccLog, eventID + staLoc + eventLocs + distAz + dtValue+ results
+	def close(self):
+		self.ccLog.close()
+		
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
 ## 1. Prep Data ##
 # prepDataSets.py
@@ -408,6 +445,10 @@ def checkWaveform(trace):
 	#~ Some method to remove "broken" waveforms ~#
 	##
 	
+	if not ok:
+		shortTime = None
+		longTime = None
+		
 	return ok,shortTime,longTime
 
 ## 2. Calculate Cross-Correlation Values for All Pairs ##
@@ -420,11 +461,7 @@ def matchComputeCC(dataStruct):
 	myEventArray = EventArray()
 		
 	## Initialize (text) log file ##
-	ccLog = open(settings['path'] + '/ccLog-All.txt',"w")
-	header = 'Count Net  Sta Loc Chan:   staLat   staLon |   aEvLat   aEvLon,   bEvLat   bEvLon | '
-	header = header + 'aGCarc   bGCarc,     aAz     bAz |dtObs dtPred (dtObs-dtPred)|'
-	header = header + ' wt normCC unnormCC unnormCC_inverse | powerSignalA powerSignalB'
-	print >>ccLog, header
+	ccLog = CCLog(fileName=settings['path'] + '/ccLog-All.txt')
 
 	## Read list of events ##
 	events = glob.glob(settings['path']+settings['pathPrefix']+'.h5')
@@ -454,9 +491,7 @@ def matchComputeCC(dataStruct):
 
 			## Update (text) log file ##
 			count = 0
-			linkingPhrase = 'Linking {} and {}'.format(aEventName,bEventName)
-			print >>ccLog, linkingPhrase
-			print linkingPhrase
+			ccLog.linking(aEventName,bEventName)
 
 			## Look for viable links between master and secondary events ##
 			for aChan in aEvent:
@@ -506,19 +541,7 @@ def matchComputeCC(dataStruct):
 			         dtPredicted = (aTrace.gcarc - bTrace.gcarc) * settings['gc2km'] * settings['slowness']
 			         
 			         count += 1
-			         eventID = '   %03d %2s %5s %2s %3s : ' \
-			         		% (count,aTrace.network,aTrace.station, \
-			         			aTrace.staLocation,aTrace.channel)
-			         staLoc = '%8.3f %8.3f | ' % (aTrace.staLat,aTrace.staLon)
-			         eventLocs = '%8.3f %8.3f, %8.3f %8.3f | ' \
-			         		% (aTrace.evLat,aTrace.evLon,bTrace.evLat,bTrace.evLon)
-			         distAz = '%7.3f %7.3f, %7.3f %7.3f | ' \
-			         		% (aTrace.gcarc,bTrace.gcarc,aTrace.az,bTrace.az)
-			         dtValue = '%6.2f %6.2f %6.2f | ' % (dtObs,dtPredicted,(dtObs-dtPredicted))
-			         results = '%0.3f %5.3f %5.3f %5.3f | ' % (weight,nCC,unCC,unCC_i)
-			         results = results + '%9.6e %9.6e' % (powerA,powerB)
-
-			         print >>ccLog, eventID + staLoc + eventLocs + distAz + dtValue+ results
+			         ccLog.data(count,aTrace,bTrace,dtObs,dtPredicted,weight,nCC,unCC,unCC_i,powerA,powerB)
 			         
 			         ## Write results to (digital) log ##
 			         resultValues = [weight,lag,nCC,unCC,unCC_i,powerA,powerB]
@@ -623,54 +646,6 @@ def getOptimalShift(aTrace,bTrace):
 # 	pdb.set_trace()
 	
 	return timeShift,ccNorm,ccUnNorm,ccUnNormInv,aSum,bSum
-# def calcCC(aTrace,bTrace):
-# 	
-# 	## Cross-Correlate ##
-# 	aSeis = aTrace.data
-# 	bSeis = bTrace.data
-# 	maxLen = max([len(aSeis), len(bSeis)])
-# 	if len(aSeis) != len(bSeis):
-# 		temp = np.zeros(maxLen)
-# 		aSeis = temp[:len(aSeis)] + aSeis
-# 		bSeis = temp[:len(bSeis)] + bSeis
-# 	
-# 	ccValues = np.correlate(aSeis,bSeis,'full')
-# 	maxCC = max(abs(ccValues))
-# 	maxIndex = np.where(abs(ccValues)==maxCC)[0][0]
-# 
-# 	#Generate an x axis
-# 	xcorr = np.arange(ccValues.size)
-# 
-# 	#Convert this into lag units, but still not really physical
-# 	lags = xcorr - (maxLen-1)
-# 	distancePerLag = aTrace.delta
-# 
-# 	#Convert your lags into physical units
-# 	offsets = -lags*distancePerLag
-# 	
-# 	return ccValues,offsets,maxIndex
-# def calcAllCC(aTrace,bTrace):
-# 	
-# 	## Auto-correlation of A Waveform (cc_aa) ##
-# 	autocorrValues_A,autocorrOffset_A,autocorrMaxIndex_A = calcCC(aTrace,aTrace)
-# 	ccAA = abs(autocorrValues_A[autocorrMaxIndex_A])
-# 
-# 	## Auto-correlation of B Waveform (cc_bb) ##
-# 	autocorrValues_B,autocorrOffset_B,autocorrMaxIndex_B = calcCC(bTrace,bTrace)
-# 	ccBB = abs(autocorrValues_B[autocorrMaxIndex_B])
-# 
-# 	## Cross-correlation of AB Waveform (cc_ab) ##
-# 	ccValues,offsets,maxIndex = calcCC(aTrace,bTrace)
-# 	lag  = offsets[maxIndex]
-# 	ccAB = abs(ccValues[maxIndex])
-# 
-# 	## Normalized and Unnormalized Correlation Coefficient
-# 	unnormalizedCC = ccAB / ccAA
-# 	normalizedCC   = ccAB / np.sqrt(ccAA*ccBB)
-# 	
-# 	unnormalizedCC_inverse = ccAB / ccBB
-# 		
-# 	return lag,normalizedCC,unnormalizedCC,unnormalizedCC_inverse,ccAA,ccBB
 def updateDict(log,aName,bName,channel=None,step=0):
 	if step == 1:
 
@@ -740,7 +715,7 @@ def writeResults2Dict(masterLog,aName,bName,settings,aTrace,bTrace,channel,resul
 	
 	## Populate dictionary ##
 	aTempLog = populateResultsDict(aTempLog,aTrace,bTrace,weight,lag,normCC,unnormCC,powerA,powerB)
-	bTempLog = populateResultsDict(bTempLog,bTrace,aTrace,weight,lag,normCC,unnormCC_i,powerA,powerB)
+	bTempLog = populateResultsDict(bTempLog,bTrace,aTrace,weight,-lag,normCC,unnormCC_i,powerA,powerB)
 	
 	return masterLog	
 def populateResultsDict(log,aTrace,bTrace,weight,lag,normCC,unnormCC,powerA,powerB):
@@ -791,6 +766,147 @@ def populateResultsDict(log,aTrace,bTrace,weight,lag,normCC,unnormCC,powerA,powe
 	
 	return log
 ##
+def testParse(myEventArray,ddArray,matchLoc=True):
+	global settings
+
+	fname = '/Users/mcleveland/Documents/Projects/Menard/EventSearch/Events/Graded/'
+	fname = fname + 'Test/eqLocateResults/Observations.txt'
+# 	fname = 'Observations.txt'	# name of file with list of events
+	Obs = open(fname).read()
+
+	observations = {}
+	aEvent = None
+	bEvent = None
+	Obs = Obs.split('\n' )
+	for aOb in Obs:
+		aOb = aOb.split()
+	
+		if len(aOb) > 0:
+	
+			if aOb[0] == 'Linking':
+				aEvent = int(aOb[2])
+				bEvent = int(aOb[4])
+				if aEvent not in observations.keys():
+					observations[aEvent] = {}
+				observations[aEvent][bEvent] = {}
+	
+			else:
+				shift = 0
+				observations[aEvent][bEvent][aOb[3]] = {}
+				if len(aOb) > 18:
+					obSet = observations[aEvent][bEvent][aOb[3]][aOb[4]] = {}
+					shift = 1
+				else:
+					obSet = observations[aEvent][bEvent][aOb[3]]['--'] = {} 
+				obSet['staLat'] = float(aOb[4+shift])
+				obSet['staLon'] = float(aOb[5+shift])
+				obSet['aLat'] =  float(aOb[6+shift])
+				obSet['aLon'] =  float(aOb[7+shift])
+				obSet['bLat'] =  float(aOb[8+shift])
+				obSet['bLon'] =  float(aOb[9+shift])
+
+				obSet['dtObs'] = float(aOb[10+shift])
+				obSet['dtPred'] = float(aOb[11+shift].split(',')[0])
+				obSet['dtDiff'] = float(aOb[12+shift])
+
+				obSet['wt'] = float(aOb[13+shift])
+
+				obSet['cc_norm'] = float(aOb[14+shift])
+				obSet['cc_un'] = float(aOb[15+shift])
+		
+				obSet['powerSignalA'] = float(aOb[16+shift])
+				obSet['powerSignalB'] = float(aOb[17+shift])
+
+	tempDDArray = []
+	slowness = settings['slowness']
+	ccLog = CCLog(fileName=settings['path'] + '/ccLog-All.txt')
+	masterA = ''
+	masterB = ''
+	
+	tMatch1 = ddArray[-1].aEvent.stationID
+	tMatch2 = ddArray[-1].aEvent.originStr
+	tMatch3 = ddArray[-1].aEvent.originStr
+	
+	totalObs = 0
+	for aOb in observations:
+	 for bOb in observations[aOb]:
+	  for aSta in observations[aOb][bOb]:
+	   for aLoc in observations[aOb][bOb][aSta]:
+		
+		ok = False
+		
+		totalObs += 1
+		
+		aEventName = myEventArray.nameArray[aOb-1]
+		bEventName = myEventArray.nameArray[bOb-1]
+		
+		for aDD in ddArray:
+			aEvTest = aDD.aEvent.originStr
+			bEvTest = aDD.bEvent.originStr
+			staTest = aDD.aEvent.station.lower()
+			locTest = aDD.aEvent.staLocation
+			chanTest = aDD.aEvent.channel
+			
+			if (aEvTest == aEventName) and (bEvTest == bEventName):
+				
+				if (masterA != aEventName) or (masterB != bEventName):
+					masterA = aEventName; masterB = bEventName
+					ccLog.linking(aEventName,bEventName)
+					count = 0
+				else:
+					count += 1
+
+				match = False
+				if matchLoc:
+					if (staTest == aSta.lower()) and (locTest == aLoc) and (chanTest == 'LHZ'):
+						match = True
+				else:
+					if (staTest == aSta.lower()) and (chanTest == 'LHZ'):
+						match = True
+				
+				if match:
+						ok = True
+						
+						eventA = aDD.aEvent
+						eventB = aDD.bEvent
+					
+						anObservation = observations[aOb][bOb][aSta][aLoc]
+										
+						theDD = DDObservation()
+
+						theDD.aEvent = eventA
+						theDD.bEvent = eventB
+
+						theDD.hSlowness = slowness
+						theDD.ccorAmplitude = anObservation['cc_norm']
+						theDD.ccorUnnormalizedAmplitude = anObservation['cc_un']
+
+						theDD.dtObs = anObservation['dtObs']
+					# 	theDD.dtPredicted = anObservation['dtPred']
+						theDD.computePredictedDifference()
+						theDD.computeDerivatives()
+						theDD.qualityValue = anObservation['cc_norm']
+
+						theDD.powerSignalA = anObservation['powerSignalA']
+						theDD.powerSignalB = anObservation['powerSignalB']
+
+						tempDDArray.append(theDD)
+
+						ccLog.data(count,eventA,eventB,theDD.dtObs,theDD.dtPredicted,0, \
+								theDD.ccorAmplitude,theDD.ccorUnnormalizedAmplitude,0, \
+								theDD.powerSignalA,theDD.powerSignalB)
+				
+						break
+
+# 		if not ok:
+# 			print '  ',aOb,aEventName,bOb,bEventName,aSta,aLoc,observations[aOb][bOb][aSta][aLoc]['cc_norm']
+# 			print "dataLog['{}']['{}']['accepted'].keys()".format(aEventName,bEventName)
+# 			pdb.set_trace()
+			
+	ccLog.close()
+	print '\nTotal Obs:  {}\nTotal Read: {}\n'.format(totalObs,len(tempDDArray))
+	return tempDDArray
+##
 def shouldLink(trace01,trace02,normCC):
 	global settings
 
@@ -803,7 +919,11 @@ def shouldLink(trace01,trace02,normCC):
 	
 	else:
 		return False
+#
 def doIteration(myEventArray,ddArray):
+	'''
+	Perform inversion.
+	'''
 	global settings
 	
 	nEvents = len(myEventArray.events)
@@ -820,10 +940,9 @@ def doIteration(myEventArray,ddArray):
 
 	A = np.zeros([nRows,nCols])
 	b = np.zeros([ldb,nrhs])
-	p = np.zeros(nRows)
 
 	[A,b,s,rank,lwork,info] = lapack.clapack.sgelss(A,b,rcond,lwork) 
-
+	
 	theInitialDDResidualsText = 'Initial DD Residuals\nIndex DD_Obs DD_Pred DD_Obs-DD_Pred\n'
 
 	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
@@ -832,8 +951,7 @@ def doIteration(myEventArray,ddArray):
 	for i in np.arange(0,nDiffs):
 		dd = ddArray[i]
 		theInitialDDResidualsText += ('%03d %9.3f %9.3f %9.3f\n' % \
-			(i+1, dd.dtObs, dd.dtPredicted,(dd.dtObs-dd.dtPredicted)))
-		
+			(i+1, dd.dtObs, dd.dtPredicted,(dd.dtObs-dd.dtPredicted)))		
 	theInitialDDResidualsText += '************************************************\n'
 
 	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
@@ -850,52 +968,17 @@ def doIteration(myEventArray,ddArray):
 	nIter = 3
 	for iter in np.arange(0,nIter):
 
-		##~~~ D.1. Zero the arrays ~~~##
-		A = np.zeros([nRows,nCols])
-		b = np.zeros([ldb,nrhs])
-		x = np.zeros([ldb,nrhs])
-
-		##~~~ D.2. Build the inversion matrix and vectors ~~~##
-		for row in np.arange(0,nDiffs):
-			
-			dd = ddArray[row]
-			
-			i01 = myEventArray.eventIndex(dd.aEvent)
-			i02 = myEventArray.eventIndex(dd.bEvent)
-			
-			b[row] = (dd.dtObs - dd.dtPredicted) * dd.weight
-						
-			'''##~~~ this if the jumping part - not implemented yet ~~~##
-             b[row] += [[dd firstEvent]  originTimeShift] -
-             [[dd secondEvent] originTimeShift]; '''
-
-			derivatives = dd.derivatives
-						
-			col = i01 * 4
-			A[row][col] =  derivatives[0] * dd.weight
-			col += 1
-			A[row][col] =  derivatives[1] * dd.weight
-			col += 1
-			A[row][col] =  derivatives[2] * dd.weight
-			col += 1
-			A[row][col] =  derivatives[3] * dd.weight
-
-			col = i02 * 4;
-			A[row][col] = -derivatives[4] * dd.weight
-			col += 1
-			A[row][col] = -derivatives[5] * dd.weight
-			col += 1
-			A[row][col] = -derivatives[6] * dd.weight
-			col += 1
-			A[row][col] = -derivatives[7] * dd.weight
-				
-		##~~~ D.3. The minimum length constraint ~~~##
+		##~~~ D.1. Build the inversion matrix and vectors ~~~##
+		A,b,p,x,dt,wtA = \
+			buildInversionMatrixVectors(ddArray,myEventArray,nRows,nCols,ldb,nrhs,nDiffs)
+					
+		##~~~ D.2. The minimum length constraint ~~~##
 		row = nDiffs
 
 		for i in np.arange(0,nCols):
 			A[row+i][i] = settings['minLengthWt']
 
-		##~~~ D.4. The constant centroid constraint ~~~##
+		##~~~ D.3. The constant centroid constraint ~~~##
 		row += nCols
 
 		for i in np.arange(0,nEvents):
@@ -905,10 +988,19 @@ def doIteration(myEventArray,ddArray):
 			A[row+2][col+2] = settings['zeroCentroidWt']
 			A[row+3][col+3] = settings['zeroCentroidWt']
 		
-		##~~~ D.5. Perform inversion of A matrix ~~~##
-		[V,x,s,rank,work,info] = lapack.clapack.sgelss(A,b,rcond,lwork)
-
-		##~~~ D.6. Compute the new weights based on the residuals ~~~##
+		##~~~ D.4. Perform inversion of A matrix ~~~##
+		[V,x,s,rank,work,info] = lapack.clapack.sgelss(A,b,cond=rcond,lwork=lwork)
+# 		[V,x,s,rank,work,info] = lapack.clapack.sgelss(A,b,cond=0.001,lwork=lwork)
+		
+		##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Begin Testing ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+# 		[xT,residT,rankT,sT] = np.linalg.lstsq(A,b,rcond)
+# 		[xT,residT,rankT,sT] = np.linalg.lstsq(A,b,rcond=0.001)
+		
+# 		plotInversionResults(nEvents,iter,A,x,b,xT,dt,wtA,pStyle='split')		
+		plotInversionResults2(nEvents,iter,A,x,b,wtA,pStyle='split')		
+		##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ End Testing ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+		
+		##~~~ D.5. Compute the new weights based on the residuals ~~~##
 		'''
 		I consider anything fitting within 2 seconds to be a good observation perhaps
 			this should be a multiplicative factor, since the original weight may reflect
@@ -926,6 +1018,7 @@ def doIteration(myEventArray,ddArray):
 			##~~~ A has the weights built in. I want the weight computed from the raw 
 			##~~~ 	DD time misfit, so I remove the weights here
 			absMisfit  = np.abs(predicted - b[i])
+			
 			weightedMisfit += absMisfit*absMisfit
 			if dd.weight != 0.0:
 				absMisfit /= dd.weight
@@ -958,26 +1051,25 @@ def doIteration(myEventArray,ddArray):
 
 		theSingularValuesText += ('%03d %9.3f\n' % (i+1,s[i]))
     
+	
 	theLocationPerturbationsText = 'Location perturbations:\n'
+
+	theLocationsText = 'Locations:\n'
+	theLocationsText += \
+		'index eventName         evLatInit evLonInit |    evLat    evLon   |    newLat   newLon  | kmMv_tot   azMv_tot |   OTshift   kmMoved   azMoved\n'
+
 	for i in np.arange(0,nEvents):
 
 		j = 4 * i
 		theLocationPerturbationsText += ('%03d %9.3f %9.3f %9.3f %9.3f\n' % \
                                      (i+1, x[j], x[j+1], x[j+2], x[j+3]))
     	
-	''' UPDATE THE EVENTS
-     note the scaling of the longitude value. I am treating the problem
-     as if I had simply weighted the partial by 111.19 - not really doing
-     a change in projection, so I don't use cos(lat)*111.19 in the conversion,
-     I am only doing a scaling.
-	'''
-	theLocationsText = 'Locations:\n'
-	theLocationsText += \
-		'index eventName         evLatInit evLonInit |    evLat    evLon   |    newLat   newLon  | kmMv_tot   azMv_tot |   OTshift   kmMoved   azMoved\n'
-	for i in np.arange(0,nEvents):
-
-		j = 4 * i
-		
+		''' UPDATE THE EVENTS
+		 note the scaling of the longitude value. I am treating the problem
+		 as if I had simply weighted the partial by 111.19 - not really doing
+		 a change in projection, so I don't use cos(lat)*111.19 in the conversion,
+		 I am only doing a scaling.
+		'''
 		event  = myEventArray.events[i]
 		newLat = event.evLat - (x[j]  /settings['gc2km'])
 		newLon = event.evLon + (x[j+1]/settings['gc2km'])
@@ -985,6 +1077,9 @@ def doIteration(myEventArray,ddArray):
 		##~~~ Should compute the distance it has moved here ~~~##
 		(distI,azI,baz) = gps2DistAzimuth(event.evLatInitial,event.evLonInitial,newLat,newLon)
 		distI /= 1000.0
+		
+# 		if i == 5:
+# 			pdb.set_trace()
 
 		(dist,az,baz) = gps2DistAzimuth(event.evLat,event.evLon,newLat,newLon)
 		dist /= 1000.0
@@ -1004,36 +1099,94 @@ def doIteration(myEventArray,ddArray):
 		
 # ->	[myController mapEvents];
 
-	
-	theDDInfoText = 'Index Observed Predicted (obs-pred) weight DD_Obs DD_Pred:\n'
-    
 	##~~~~~~~~~~~~~~~~~~~~~~~##
 	##~~~ UPDATE THE DD's ~~~##
 	##~~~~~~~~~~~~~~~~~~~~~~~##
-	for i in np.arange(0,nDiffs):
-
-		dd = ddArray[i]
-		theDDInfoText += ('%03d %9.3f %9.3f %9.3f %8.3f %9.3f %9.3f\n' % \
-							(i+1,b[i],p[i],(b[i]-p[i]),dd.weight,dd.dtObs,dd.dtPredicted))
-        
-		# Commented out by CJA in original code
-		#value = -([[dd firstEvent] originTimeShift] - [[dd secondEvent] originTimeShift]);
-		#[dd updateDtObs:value];
-		
-		dd.computePredictedDifference()
-		dd.weight = 1.0
-		
-		dd.computeDerivatives()
-		
-	print theInitialDDResidualsText
-	print theSingularValuesText
-	print theLocationPerturbationsText
-	print theDDInfoText
+	theDDInfoText = updateDDs(ddArray,myEventArray,b,p)
+			
+# 	print theInitialDDResidualsText
+# 	print theSingularValuesText
+# 	print theLocationPerturbationsText
+# 	print theDDInfoText
 	print theLocationsText
 	
 	printInversionResults(theInitialDDResidualsText,theSingularValuesText, \
 							theLocationPerturbationsText,theDDInfoText,theLocationsText, \
-							wtMisfitText,unwtMisfitText)
+							wtMisfitText,unwtMisfitText)	
+def buildInversionMatrixVectors(ddArray,myEventArray,nRows,nCols,ldb,nrhs,nDiffs):
+	##~~~ Zero the arrays ~~~##
+	A = np.zeros([nRows,nCols])
+	b = np.zeros([ldb,nrhs])
+	p = np.zeros(nRows)
+	x = np.zeros([ldb,nrhs])
+	
+	dt = np.zeros([ldb,nrhs])
+	wtA = np.zeros([ldb,nrhs])
+
+	##~~~ Build the inversion matrix and vectors ~~~##
+	for row in np.arange(0,nDiffs):
+		
+		dd = ddArray[row]
+		
+		i01 = myEventArray.eventIndex(dd.aEvent)
+		i02 = myEventArray.eventIndex(dd.bEvent)
+		
+		dt[row] = dd.dtObs - dd.dtPredicted
+		wtA[row] = dd.weight
+		
+		b[row] = (dd.dtObs - dd.dtPredicted) * dd.weight
+					
+		'''##~~~ this if the jumping part - not implemented yet ~~~##
+		 b[row] += [[dd firstEvent]  originTimeShift] -
+		 [[dd secondEvent] originTimeShift]; '''
+
+		derivatives = dd.derivatives
+					
+		col = i01 * 4
+		A[row][col] =  derivatives[0] * dd.weight
+		col += 1
+		A[row][col] =  derivatives[1] * dd.weight
+		col += 1
+		A[row][col] =  derivatives[2] * dd.weight
+		col += 1
+		A[row][col] =  derivatives[3] * dd.weight
+
+		col = i02 * 4;
+		A[row][col] = -derivatives[4] * dd.weight
+		col += 1
+		A[row][col] = -derivatives[5] * dd.weight
+		col += 1
+		A[row][col] = -derivatives[6] * dd.weight
+		col += 1
+		A[row][col] = -derivatives[7] * dd.weight
+	
+	return A,b,p,x,dt,wtA
+def updateDDs(ddArray,eventArray,b,p):
+
+	theDDInfoText = 'Index Observed Predicted (obs-pred) weight DD_Obs DD_Pred:\n'
+
+	for i,dd in enumerate(ddArray):
+	
+		i01 = eventArray.eventIndex(dd.aEvent)
+		e01 = eventArray.events[i01]
+		dd.aEvent.updateOrigin(e01.evLat,e01.evLon)
+		dd.aEvent.originTimeShift = e01.originTimeShift
+		
+		i02 = eventArray.eventIndex(dd.bEvent)
+		e02 = eventArray.events[i02]
+		dd.bEvent.updateOrigin(e02.evLat,e02.evLon)
+		dd.bEvent.originTimeShift = e02.originTimeShift
+
+		theDDInfoText += ('%03d %9.3f %9.3f %9.3f %8.3f %9.3f %9.3f\n' % \
+							(i+1,b[i],p[i],(b[i]-p[i]),dd.weight,dd.dtObs,dd.dtPredicted))
+
+		dd.computePredictedDifference()
+		dd.weight = 1.0
+		
+		dd.computeDerivatives()
+
+	return theDDInfoText
+#
 def buildDifferenceArray(ddArray,eventA,eventB,weight,lag,nCC,unCC,powerA,powerB):
 	global settings
 	
@@ -1130,6 +1283,297 @@ def printInversionResults(initDDResid,singValues,locPert,ddInfo,finalLocations,w
 	f.write(finalLocations)
 	f.write('\n')
 	f.close()	
+def plotInversionResults(nEvents,iter,A,x,b,xT,dt,wtA,pStyle='split'):
+	'''
+	Plots 2 figures.
+	
+	This function requires the following command to be called at some point after this
+	function is called:
+		>> fig1.savefig('InversionResults_A-Iter_{}.pdf'.format(i), bbox_inches='tight')
+		>> fig2.savefig('InversionResults_B-Iter_{}.pdf'.format(i), bbox_inches='tight')
+		>> plt.clf()
+		>> plt.close()
+		>> plt.show()
+	'''
+	global fig1,fig2
+	
+	Ax  = np.mat(A)*np.mat(x[:(nEvents*4)])
+	AxT = np.mat(A)*np.mat(xT)
+
+	if iter == 0:
+		tempMax1 = np.ceil(max(Ax[:(nEvents*4)])); tempMin1 = np.floor(min(Ax[:(nEvents*4)]))
+		tempMax2 = np.ceil(max(AxT[:(nEvents*4)])); tempMin2 = np.floor(min(AxT[:(nEvents*4)]))
+		minY = min(tempMin1,tempMin2); maxY = max(tempMax1,tempMax2)
+	else:
+		plt.figure(1)
+		plt.subplot(2, 2, 1)
+		limits = plt.axis()
+		minY = limits[2]; maxY = limits[3]
+
+		tempMax1 = np.ceil(max(Ax[:(nEvents*4)])); tempMin1 = np.floor(min(Ax[:(nEvents*4)]))
+		tempMax2 = np.ceil(max(AxT[:(nEvents*4)])); tempMin2 = np.floor(min(AxT[:(nEvents*4)]))
+		
+		minY = min(minY,tempMin1,tempMin2); maxY = max(maxY,tempMax1,tempMax2)
+	
+	if pStyle == 'split':
+		for i in np.arange(0,nEvents):
+			colors1 = ['go','bo','ro']
+			colors2 = ['gv','bv','rv']
+			colors3 = ['g+','b+','r+']
+			colors4 = ['gs','bs','rs']
+
+			j = 4 * i
+			
+			fig1 = plt.figure(1)
+			plt.subplot(2, 2, 1)
+
+			plt.plot(b[j],Ax[j],colors1[iter],label='colat')
+			plt.plot(b[j+1],Ax[j+1],colors2[iter],label='lon')
+			plt.plot(b[j+2],Ax[j+2],colors3[iter],label='depth')
+			plt.plot(b[j+3],Ax[j+3],colors4[iter],label='time')
+			plt.xlabel('b')
+			plt.ylabel('Ax')
+			plt.title('lapack.clapack.sgelss')
+			plt.ylim((minY,maxY))
+# 			if (iter == 0) and (i == 0):
+# 				legend = plt.legend(loc=2,ncol=1,handlelength=1,borderpad=0.5,labelspacing=0.5,columnspacing=0.5)
+# 				for label in legend.get_texts():
+# 					label.set_fontsize('xx-small')	
+
+			plt.subplot(2, 2, 2)
+			plt.plot(b[j],AxT[j],colors1[iter])
+			plt.plot(b[j+1],AxT[j+1],colors2[iter])
+			plt.plot(b[j+2],AxT[j+2],colors3[iter])
+			plt.plot(b[j+3],AxT[j+3],colors4[iter])
+			plt.xlabel('b')
+			plt.ylabel('Ax')
+			plt.title('numpy.linalg.lstsq')		
+			plt.ylim((minY,maxY))
+
+			plt.subplot(2, 2, 3)
+			plt.plot(x[j],xT[j],colors1[iter])
+			plt.plot(x[j+1],xT[j+1],colors2[iter])
+			plt.plot(x[j+2],xT[j+2],colors3[iter])
+			plt.plot(x[j+3],xT[j+3],colors4[iter])
+			plt.xlabel('Lapack')
+			plt.ylabel('Numpy')
+			plt.title('unweighted x values')		
+
+			plt.subplot(2, 2, 4)
+			plt.plot(Ax[j],AxT[j],colors1[iter])
+			plt.plot(Ax[j+1],AxT[j+1],colors2[iter])
+			plt.plot(Ax[j+2],AxT[j+2],colors3[iter])
+			plt.plot(Ax[j+3],AxT[j+3],colors4[iter])
+			plt.xlabel('Lapack')
+			plt.ylabel('Numpy')
+			plt.title('Ax')
+
+			plt.tight_layout()
+
+			fig2 = plt.figure(2)
+			plt.subplot(2, 2, 1)
+			plt.plot(dt[j],Ax[j],colors1[iter])
+			plt.plot(dt[j+1],Ax[j+1],colors2[iter])
+			plt.plot(dt[j+2],Ax[j+2],colors3[iter])
+			plt.plot(dt[j+3],Ax[j+3],colors4[iter])
+			plt.xlabel('dt (unweighted b)')
+			plt.ylabel('Ax')
+			plt.title('lapack.clapack.sgelss')		
+
+			plt.subplot(2, 2, 2)
+			plt.plot(dt[j],AxT[j],colors1[iter])
+			plt.plot(dt[j+1],AxT[j+1],colors2[iter])
+			plt.plot(dt[j+2],AxT[j+2],colors3[iter])
+			plt.plot(dt[j+3],AxT[j+3],colors4[iter])
+			plt.xlabel('dt (unweighted b)')
+			plt.ylabel('Ax')
+			plt.title('numpy.linalg.lstsq')		
+	
+			plt.subplot(2, 2, 3)
+			plt.plot(x[j]*wtA[j],xT[j]*wtA[j],colors1[iter])
+			plt.plot(x[j+1]*wtA[j+1],xT[j+1]*wtA[j+1],colors2[iter])
+			plt.plot(x[j+2]*wtA[j+2],xT[j+2]*wtA[j+2],colors3[iter])
+			plt.plot(x[j+3]*wtA[j+3],xT[j+3]*wtA[j+3],colors4[iter])
+			plt.xlabel('Lapack')
+			plt.ylabel('Numpy')
+			plt.title('weighted x values')		
+	
+			plt.subplot(2, 2, 4)
+			plt.plot(Ax[j]*wtA[j],AxT[j]*wtA[j],colors1[iter])
+			plt.plot(Ax[j+1]*wtA[j+1],AxT[j+1]*wtA[j+1],colors2[iter])
+			plt.plot(Ax[j+2]*wtA[j+2],AxT[j+2]*wtA[j+2],colors3[iter])
+			plt.plot(Ax[j+3]*wtA[j+3],AxT[j+3]*wtA[j+3],colors4[iter])
+			plt.xlabel('Lapack')
+			plt.ylabel('Numpy')
+			plt.title('Ax')
+	
+	else:			
+		colors = ['go','bo','ro']
+
+		fig1 = plt.figure(1)
+		plt.subplot(2, 2, 1)
+		Ax = np.array(np.mat(A)*np.mat(x[:(nEvents*4)]))
+		plt.plot(b[:nEvents*4],Ax[:nEvents*4],colors[iter])
+		plt.xlabel('b')
+		plt.ylabel('Ax')
+		plt.title('Lapack')		
+
+		plt.subplot(2, 2, 2)
+		AxT = np.array(np.mat(A)*np.mat(xT))
+		plt.plot(b[:nEvents*4],AxT[:nEvents*4],colors[iter])
+		plt.xlabel('b')
+		plt.ylabel('Ax')
+		plt.title('Numpy')		
+
+		plt.subplot(2, 2, 3)
+		plt.plot(x[:(nEvents*4)],xT,colors[iter])
+		plt.xlabel('Lapack')
+		plt.ylabel('Numpy')
+		plt.title('unweighted x values')		
+
+		plt.subplot(2, 2, 4)
+		plt.plot(Ax[:nEvents*4],AxT[:nEvents*4],colors[iter])
+		plt.xlabel('Lapack')
+		plt.ylabel('Numpy')
+		plt.title('Ax')
+
+		plt.tight_layout()
+
+		fig2 = plt.figure(2)
+		plt.subplot(2, 2, 1)
+		plt.plot(dt[:nEvents*4],Ax[:nEvents*4],colors[iter])
+		plt.xlabel('dt (unweighted b)')
+		plt.ylabel('Ax')
+		plt.title('Lapack')		
+
+		plt.subplot(2, 2, 2)
+		plt.plot(dt[:nEvents*4],AxT[:nEvents*4],colors[iter])
+		plt.xlabel('b')
+		plt.ylabel('Ax')
+		plt.title('Numpy')		
+	
+		plt.subplot(2, 2, 3)
+		plt.plot(x[:(nEvents*4)]*wtA[:(nEvents*4)],xT*wtA[:(nEvents*4)],colors[iter])
+		plt.xlabel('Lapack')
+		plt.ylabel('Numpy')
+		plt.title('weighted x values')		
+	
+		plt.subplot(2, 2, 4)
+		plt.plot(Ax[:(nEvents*4)]*wtA[:(nEvents*4)],AxT[:(nEvents*4)]*wtA[:(nEvents*4)],colors[iter])
+		plt.xlabel('Lapack')
+		plt.ylabel('Numpy')
+		plt.title('Ax')
+	
+	plt.tight_layout()
+def plotInversionResults2(nEvents,iter,A,x,b,wtA,pStyle='split'):
+	'''
+	Plots a single figure
+	
+	This function requires the following command to be called at some point after this
+	function is called:
+		>> fig1.savefig('InversionResults_A-Iter_{}.pdf'.format(i), bbox_inches='tight')
+		>> plt.clf()
+		>> plt.close()
+		>> plt.show()
+	'''
+	global fig1
+	
+	Ax  = np.mat(A)*np.mat(x[:(nEvents*4)])
+
+	if iter == 0:
+		maxY = np.ceil(max(Ax[:(nEvents*4)])); minY = np.floor(min(Ax[:(nEvents*4)]))
+	else:
+		plt.figure(1)
+		plt.subplot(2, 2, 1)
+		limits = plt.axis()
+		minY = limits[2]; maxY = limits[3]
+
+		tempMax1 = np.ceil(max(Ax[:(nEvents*4)])); tempMin1 = np.floor(min(Ax[:(nEvents*4)]))
+		
+		minY = min(minY,tempMin1); maxY = max(maxY,tempMax1)
+	
+	if pStyle == 'split':
+		events = np.arange(0,nEvents)
+
+		colors1 = ['go','bo','ro']
+		colors2 = ['gv','bv','rv']
+		colors3 = ['g+','b+','r+']
+		colors4 = ['gs','bs','rs']
+
+		j = 4 * iter
+		
+		fig1 = plt.figure(1)
+		plt.subplot(2, 2, 1)
+
+		j = events * 4
+		plt.plot(b[j],Ax[j],colors1[iter],label='colat')
+		plt.plot(b[j+1],Ax[j+1],colors2[iter],label='lon')
+		plt.plot(b[j+2],Ax[j+2],colors3[iter],label='depth')
+		plt.plot(b[j+3],Ax[j+3],colors4[iter],label='time')
+		plt.xlabel('b')
+		plt.ylabel('Ax')
+		plt.title('lapack.clapack.sgelss')
+		plt.ylim((minY,maxY))
+		plt.grid('on')
+
+		plt.subplot(2, 2, 2)
+		data = Ax[j] - b[j]
+		plt.plot(j,data,colors1[iter])
+		plt.xlabel('Index')
+		plt.ylabel('Ax - b')
+		plt.title('Resid: Colatitude: %0.4f' % (np.std(data)) )		
+		plt.ylim((-2,2))
+		plt.grid('on')
+
+		plt.subplot(2, 2, 3)
+		data = Ax[j+1] - b[j+1]
+		plt.plot(j+1,data,colors2[iter])
+		plt.xlabel('Index')
+		plt.ylabel('Ax - b')
+		plt.title('Resid: Longitude: %0.4f' % (np.std(data)) )		
+		plt.ylim((-2,2))
+		plt.grid('on')
+
+		plt.subplot(2, 2, 4)
+		data = Ax[j+3] - b[j+3]
+		plt.plot(j+3,data,colors4[iter])
+		plt.xlabel('Index')
+		plt.ylabel('Ax - b')
+		plt.title('Resid: Time: %0.4f' % (np.std(data)) )	
+		plt.ylim((-2.5,2.5))
+		plt.grid('on')
+		
+	else:			
+		colors = ['go','bo','ro']
+
+		fig1 = plt.figure(1)
+		plt.subplot(2, 2, 1)
+		Ax = np.array(np.mat(A)*np.mat(x[:(nEvents*4)]))
+		plt.plot(b[:nEvents*4],Ax[:nEvents*4],colors[iter])
+		plt.xlabel('b')
+		plt.ylabel('Ax')
+		plt.title('Lapack')		
+
+		plt.subplot(2, 2, 2)
+		AxT = np.array(np.mat(A)*np.mat(xT))
+		plt.plot(b[:nEvents*4],AxT[:nEvents*4],colors[iter])
+		plt.xlabel('b')
+		plt.ylabel('Ax')
+		plt.title('Numpy')		
+
+		plt.subplot(2, 2, 3)
+		plt.plot(dt[:nEvents*4],Ax[:nEvents*4],colors[iter])
+		plt.xlabel('dt (unweighted b)')
+		plt.ylabel('Ax')
+		plt.title('Lapack')		
+
+		plt.subplot(2, 2, 4)
+		plt.plot(dt[:nEvents*4],AxT[:nEvents*4],colors[iter])
+		plt.xlabel('b')
+		plt.ylabel('Ax')
+		plt.title('Numpy')		
+		
+	plt.tight_layout()
 ##
 def reBuildDifferenceArray(dataLog,myEventArray):
 	global settings
@@ -1194,17 +1638,16 @@ def reBuildEventInformation(ddEvent,newEvent,staID):
 	ddEvent.staLon      = newEvent['staLoc']['lon']
 	ddEvent.staElev     = newEvent['staLoc']['elev']
 	ddEvent.staDepth    = newEvent['staLoc']['depth']
+
+	ddEvent.updateOrigin(ddEvent.evLat,ddEvent.evLon)
+		
+	'''
+	The event information from myEventArray may not be the same station information
+		so unrequired information will be removed.
+	'''
 	ddEvent.calibration = None
 	ddEvent.componentAzNorth = None
 	ddEvent.componentIncidentAngleVertical = None
-
-	ddEvent.origin  = None
-
-	ddEvent.distance = newEvent['aEvent']['distance']
-	ddEvent.gcarc    = newEvent['aEvent']['gcarc']
-	ddEvent.az       = newEvent['aEvent']['az']
-	ddEvent.baz      = newEvent['aEvent']['baz']
-
 	ddEvent.quality    = None
 	ddEvent.idep       = None
 	ddEvent.npts       = None
@@ -1295,11 +1738,15 @@ def findAzLag(event_A,event_B,log,set='accepted'):
 		links = []
 	
 	evLocs = []
-	temp = dataLog[event_A][event_B]['accepted'].keys()
-	evLocs.append(dataLog[event_A][event_B]['accepted'][temp[0]]['aEvent']['lat'])
-	evLocs.append(dataLog[event_A][event_B]['accepted'][temp[0]]['aEvent']['lon'])
-	evLocs.append(dataLog[event_A][event_B]['accepted'][temp[0]]['bEvent']['lat'])
-	evLocs.append(dataLog[event_A][event_B]['accepted'][temp[0]]['bEvent']['lon'])
+	if len(log[event_A][event_B]['accepted']) > 0:
+		tSet = 'accepted'
+	else:
+		tSet = 'unused'
+	temp = log[event_A][event_B][tSet].keys()
+	evLocs.append(log[event_A][event_B][tSet][temp[0]]['aEvent']['lat'])
+	evLocs.append(log[event_A][event_B][tSet][temp[0]]['aEvent']['lon'])
+	evLocs.append(log[event_A][event_B][tSet][temp[0]]['bEvent']['lat'])
+	evLocs.append(log[event_A][event_B][tSet][temp[0]]['bEvent']['lon'])
 		
 	return azimuth,lag,links,evLocs
 def updatePlot(aEvent,bEvent,log):
@@ -1354,6 +1801,75 @@ def bDataSet(event):
 	bEvent = bGlobal = event
 
 	updatePlot(aEvent,bEvent,dataLog)
+
+def plotAllCorrValues(log):
+	
+	plotPath = settings['path'] + '/CorrPlots/'
+	makeDir(plotPath)
+		
+	events = sorted(log.keys())
+	for aEvent in events:
+		
+		print 'Plotting all {} pairs'.format(aEvent)
+		
+		plotEventPath = plotPath + aEvent + '/'
+		makeDir(plotEventPath)
+
+		for bEvent in events:
+			if aEvent != bEvent:
+
+				if bEvent in log[aEvent]:
+					azimuth_pick,lag_pick,links,locs = findAzLag(aEvent,bEvent,log,set='accepted')
+					azimuth_un,lag_un,dummy,dummy = findAzLag(aEvent,bEvent,log,set='unused')
+	
+					fig, ax = plt.subplots()
+	
+					symbols = ['o','v','*']
+					index = 0
+					for aChan in settings['channels']:
+						aChan = aChan.upper()
+						
+						if aChan in azimuth_pick:
+							pick_x = azimuth_pick[aChan]
+							pick_y = lag_pick[aChan]
+						else:
+							pick_x = []
+							pick_y = []
+							
+						if aChan in azimuth_un:
+							unpick_x = azimuth_un[aChan]
+							unpick_y = lag_un[aChan]
+						else:
+							unpick_x = []
+							unpick_y = []
+
+						ax.plot(pick_x,pick_y,symbols[index],lw=2,color='red')
+						ax.plot(unpick_x,unpick_y,symbols[index],lw=0.5,color='gray')
+						index += 1
+		
+					linkT = ''
+					for aChan in links:
+						if aChan != 'total':
+							linkT = linkT+aChan+': '+str(links[aChan])+' '
+					linkT = linkT+'total'+': '+str(links['total'])+' '
+					titleText = aEvent+' & '+bEvent + '\nLinks: '+linkT
+
+				else:
+					ax.plot([],[])
+					ax.plot([],[])
+
+					titleText = aEvent+' & '+bEvent + '\nNot Linked'
+					aTitle.set_text(titleText)
+
+				ax.set_xlim([0,360])
+				ax.set_ylim([-50,50])
+				ax.xaxis.set_ticks(np.arange(0, 380, 20))
+				ax.grid(True)
+				zeroLine = ax.plot([0,360],[0,0],lw=1,color='black')
+
+				aTitle = ax.text(.5,1.01,titleText,fontsize=15,transform=ax.transAxes,ha='center')
+
+				plt.savefig(plotEventPath+'observations_{}-{}.pdf'.format(aEvent,bEvent))
 
 ## io ##
 def save2HDF5(dataStruct):
@@ -1438,6 +1954,14 @@ def readPickle(path):
 	return data
 
 ## Utilities ##
+def makeDir(directory):
+	try:
+		os.makedirs(directory)
+	except OSError:
+		if os.path.exists(directory):
+			pass
+		else:
+			raise
 def calcAzCover(array):
 	if len(array) < 2:
 		azCover1 = 0
@@ -1466,13 +1990,14 @@ def calcAzCover(array):
 
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
-
 dataStruct = Waveforms()
 
 ##~~~ Set Path ~~~##
-dataStruct.settings['path'] = '/Users/mcleveland/Documents/Projects/Menard/EventSearch/Events/Graded/Test'
+# dataStruct.settings['path'] = '/Users/mcleveland/Documents/Projects/Menard/EventSearch/Events/Graded/Test'
+dataStruct.settings['path'] = '/Users/mcleveland/Documents/Projects/Menard/EventSearch/Events/Graded/test2'
 dataStruct.settings['pathPrefix'] = '/E*'
-dataStruct.settings['dataSubDir'] = 'Dsp_Use'
+# dataStruct.settings['dataSubDir'] = 'Dsp_Use'
+dataStruct.settings['dataSubDir'] = 'Dsp'
 dataStruct.settings['fileSuffix'] = '.sac'
 
 ##~~~ HDF5 file save location ~~~##
@@ -1495,7 +2020,7 @@ dataStruct.settings['gGvHi']  = 5
 dataStruct.settings['slowness'] = 0.24
 
 ##~~~ Define Quality (False if not defined) ~~~##
-dataStruct.settings['quality'] = False
+dataStruct.settings['quality'] = 2
 
 ##~~~ Define Channel ~~~##
 dataStruct.settings['channels'] = ['lhz','lht']
@@ -1504,7 +2029,7 @@ dataStruct.settings['channels'] = ['lhz','lht']
 dataStruct.settings['linkDist'] = 120
 
 ##~~~ Define minimum acceptable CC coefficient ~~~##
-dataStruct.settings['minCC'] = 0.9
+dataStruct.settings['minCC'] = 0.90
 
 ##~~~ Define minimum number of links ~~~##
 dataStruct.settings['minLinks'] = 12
@@ -1513,13 +2038,13 @@ dataStruct.settings['minLinks'] = 12
 dataStruct.settings['minAZ'] = 50
 
 ##~~~ Weight by distance (True/False) ~~~##
-dataStruct.settings['weightByDistance'] = True
+dataStruct.settings['weightByDistance'] = False
 
 ##~~~ Define zero centroid weight ~~~##
-dataStruct.settings['zeroCentroidWt'] = 0.0001
+dataStruct.settings['zeroCentroidWt'] = 0.000
 
 ##~~~ Define minimum length weight ~~~##
-dataStruct.settings['minLengthWt'] = 0.0001
+dataStruct.settings['minLengthWt'] = 0.000
 
 ##~~~ Define GCarc to km conversion ~~~##
 dataStruct.settings['gc2km'] = 111.19
@@ -1527,10 +2052,15 @@ dataStruct.settings['gc2km'] = 111.19
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
 ##~~~ Work Flow (which steps to include) ~~~##
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
-workFlow = [1,2,3,4,6]
+# workFlow = [1,2,3]
+# workFlow = [4,6]
+# workFlow = [1,2,3,4,6]
+workFlow = [1,2,3,4,5,6]
 
 global settings
 settings = dataStruct.settings
+
+pdb.set_trace()
 
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
@@ -1563,23 +2093,37 @@ if 4 in workFlow:
 ##~~~ 5. Plot Correlation Values ~~~##
 if 5 in workFlow:
 	print '\nPlotting data\n'
-	plotCorrValues(dataLog)
+	plotAllCorrValues(dataLog)
+# 	plotCorrValues(dataLog)
 
 ##~~~ 6. Perform the iteration ~~~##
 if 6 in workFlow:
 	print '\nPerforming iteration(s)\n'
 
-	nIter = 20
+	nIter = 3
 	for i in np.arange(0,nIter):
 		i += 1
 		print '\nIteration: {}\n'.format(i)
 		doIteration(myEventArray,ddArray)
-		ddArray = reBuildDifferenceArray(dataLog,myEventArray)
+		
+		fig1.savefig('InversionResults_A-Iter_{}.pdf'.format(i), bbox_inches='tight')
+# 		fig2.savefig('InversionResults_B-Iter_{}.pdf'.format(i), bbox_inches='tight')
+		plt.clf()
+		plt.close()
+		plt.show()
 
 ##~~~ 7. ~~~##
 if 7 in workFlow:
-	print 'working'
+	print '\nPerforming test iteration(s)\n'
 
-
+	dataStruct.settings['minCC'] = 0.85
+	ddArray = reBuildDifferenceArray(dataLog,myEventArray)
+	
+	tempDDArray = testParse(myEventArray,ddArray,matchLoc=False)
+	
+	for i in np.arange(0,5):
+		doIteration(myEventArray,tempDDArray)
+		plt.clf()
+		plt.close()
+		
 # pdb.set_trace()
-
