@@ -1,7 +1,7 @@
 swLocate
 ========
 
-###Earthquake relocation
+##Earthquake relocation
 
 by Mike Cleveland (07 Nov 2014)
 
@@ -49,33 +49,33 @@ II.c. pickle - It is kind of silly that I store things as both h5py and pickle, 
 The user defined parameters are all help within the dataStruct.settings dictionary. This
 dictionary is made global so that all the functions can see it.
 
-#Set Path 
-dataStruct.settings['path'] = '/Users/mcleveland/Documents/Projects/Menard/EventSearch/Events/Graded/test2'
-	- Define where the data are located
-dataStruct.settings['pathPrefix'] = '/E`*'
-	- The leading characters to the folders containing the data. I personally use "/E*" for
+###Set Path 
+1. dataStruct.settings['path'] = '/Users/mcleveland/Documents/Projects/Menard/EventSearch/Events/Graded/test2'
+	* Define where the data are located
+2. dataStruct.settings['pathPrefix'] = '/E`*'
+	* The leading characters to the folders containing the data. I personally use "/E`*" for
 		folders suchs as "E1995-09-15-04-50-20"
-dataStruct.settings['dataSubDir'] = 'Dsp'
-	- Inside my event folders, all the SAC files are in a subdirectory. Here, you just say the 
+3. dataStruct.settings['dataSubDir'] = 'Dsp'
+	* Inside my event folders, all the SAC files are in a subdirectory. Here, you just say the 
 		name of the subdirectory folder. For example, 'Dsp' would relate to 
 		E1995-09-15-04-50-20/Dsp
-dataStruct.settings['fileSuffix'] = '.sac'
-	- Describe what your SAC files end with. All of my end with '.sac'. If your files
+4. dataStruct.settings['fileSuffix'] = '.sac'
+	* Describe what your SAC files end with. All of my end with '.sac'. If your files
 		end with something that changes, such as 'LHZ' or 'LHT', you should be able to
 		use a wildcard, like 'LH*'. I just use this so that it only tries to read in SAC
 		files, instead of some other type of file held within the folder.
 
-#HDF5 file save location 
+###HDF5 file save location 
 directory = 'Waveforms/'
 	- I think this is deprecated. It should save the HDF5 files to the same location
 		as all of your event folders, but with '.h5' appended
 
-#Define Period Band 
+###Define Period Band 
 dataStruct.settings['shortPeriod'] = 30
 dataStruct.settings['longPeriod']  = 80
 	- Self explanatory
 
-#Define Group Velocity Range (km/s) 
+###Define Group Velocity Range (km/s) 
 	- Rayleigh 
 dataStruct.settings['rGvLow'] = 3
 dataStruct.settings['rGvHi']  = 5
@@ -87,44 +87,44 @@ dataStruct.settings['gGvHi']  = 5
 	- This has not been implemented yet, however, it looks like the Love wave group
 		velocity is close enough to the Rayleigh.
 	
-#Define Slowness 
+###Define Slowness 
 dataStruct.settings['slowness'] = 0.24
 	- Self explanatory
 
-#Define Quality (False if not defined) 
+###Define Quality (False if not defined) 
 dataStruct.settings['quality'] = 2
 	- Minimum acceptable waveform quality. You can also use False if you don't want to use
 		this.
 
-#Define Channel 
+###Define Channel 
 dataStruct.settings['channels'] = ['lhz','lht']
 	- Channels that are read in. I don't think this is case-sensitive.
 
 	- Below are all the linking parameters.
 
-#Define linking distance (km) 
+###Define linking distance (km) 
 dataStruct.settings['linkDist'] = 120
 
-#Define minimum acceptable CC coefficient 
+###Define minimum acceptable CC coefficient 
 dataStruct.settings['minCC'] = 0.90
 
-#Define minimum number of links 
+###Define minimum number of links 
 dataStruct.settings['minLinks'] = 12
 
-#Define minimum azimuthal coverage of links (degrees) 
+###Define minimum azimuthal coverage of links (degrees) 
 dataStruct.settings['minAZ'] = 50
 
 	- Below are weighting values for the inversion
-#Weight by distance (True/False) 
+###Weight by distance (True/False) 
 dataStruct.settings['weightByDistance'] = False
 
-#Define zero centroid weight 
+###Define zero centroid weight 
 dataStruct.settings['zeroCentroidWt'] = 0.000
 
-#Define minimum length weight 
+###Define minimum length weight 
 dataStruct.settings['minLengthWt'] = 0.000
 
-#Define GCarc to km conversion 
+###Define GCarc to km conversion 
 dataStruct.settings['gc2km'] = 111.19
 	- Self explanatory
 
