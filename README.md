@@ -66,67 +66,67 @@ dictionary is made global so that all the functions can see it.
 		files, instead of some other type of file held within the folder.
 
 ###HDF5 file save location 
-directory = 'Waveforms/'
-	- I think this is deprecated. It should save the HDF5 files to the same location
+1. directory = 'Waveforms/'
+	* I think this is deprecated. It should save the HDF5 files to the same location
 		as all of your event folders, but with '.h5' appended
 
 ###Define Period Band 
-dataStruct.settings['shortPeriod'] = 30
-dataStruct.settings['longPeriod']  = 80
-	- Self explanatory
+1. dataStruct.settings['shortPeriod'] = 30
+2. dataStruct.settings['longPeriod']  = 80
+	* Self explanatory
 
 ###Define Group Velocity Range (km/s) 
-	- Rayleigh 
-dataStruct.settings['rGvLow'] = 3
-dataStruct.settings['rGvHi']  = 5
-	- Self explanatory. This is used to window the waveforms.
+#####Rayleigh 
+1. dataStruct.settings['rGvLow'] = 3
+2. dataStruct.settings['rGvHi']  = 5
+	* Self explanatory. This is used to window the waveforms.
 
-	- Love 
-dataStruct.settings['gGvLow'] = 3
-dataStruct.settings['gGvHi']  = 5
-	- This has not been implemented yet, however, it looks like the Love wave group
+#####Love 
+1. dataStruct.settings['gGvLow'] = 3
+2. dataStruct.settings['gGvHi']  = 5
+	* This has not been implemented yet, however, it looks like the Love wave group
 		velocity is close enough to the Rayleigh.
 	
 ###Define Slowness 
-dataStruct.settings['slowness'] = 0.24
-	- Self explanatory
+1. dataStruct.settings['slowness'] = 0.24
+	* Self explanatory
 
 ###Define Quality (False if not defined) 
-dataStruct.settings['quality'] = 2
-	- Minimum acceptable waveform quality. You can also use False if you don't want to use
+1. dataStruct.settings['quality'] = 2
+	* Minimum acceptable waveform quality. You can also use False if you don't want to use
 		this.
 
 ###Define Channel 
-dataStruct.settings['channels'] = ['lhz','lht']
-	- Channels that are read in. I don't think this is case-sensitive.
+1. dataStruct.settings['channels'] = ['lhz','lht']
+	* Channels that are read in. I don't think this is case-sensitive.
 
-	- Below are all the linking parameters.
+	* Below are all the linking parameters.
 
 ###Define linking distance (km) 
-dataStruct.settings['linkDist'] = 120
+1. dataStruct.settings['linkDist'] = 120
 
 ###Define minimum acceptable CC coefficient 
-dataStruct.settings['minCC'] = 0.90
+1. dataStruct.settings['minCC'] = 0.90
 
 ###Define minimum number of links 
-dataStruct.settings['minLinks'] = 12
+1. dataStruct.settings['minLinks'] = 12
 
 ###Define minimum azimuthal coverage of links (degrees) 
-dataStruct.settings['minAZ'] = 50
+1. dataStruct.settings['minAZ'] = 50
 
-	- Below are weighting values for the inversion
+	* Below are weighting values for the inversion
 ###Weight by distance (True/False) 
-dataStruct.settings['weightByDistance'] = False
+1. dataStruct.settings['weightByDistance'] = False
 
 ###Define zero centroid weight 
-dataStruct.settings['zeroCentroidWt'] = 0.000
+1. dataStruct.settings['zeroCentroidWt'] = 0.000
 
 ###Define minimum length weight 
-dataStruct.settings['minLengthWt'] = 0.000
+1. dataStruct.settings['minLengthWt'] = 0.000
 
 ###Define GCarc to km conversion 
-dataStruct.settings['gc2km'] = 111.19
-	- Self explanatory
+1. dataStruct.settings['gc2km'] = 111.19
+	* Self explanatory
 
 
 
