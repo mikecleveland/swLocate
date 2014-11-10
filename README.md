@@ -114,7 +114,7 @@ dictionary is made global so that all the functions can see it.
 ###Define minimum azimuthal coverage of links (degrees) 
 1. dataStruct.settings['minAZ'] = 50
 
-###Below are weighting values for the inversion
+###*Below are weighting values for the inversion*
 ###Weight by distance (True/False) 
 1. dataStruct.settings['weightByDistance'] = False
 
