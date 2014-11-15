@@ -2,11 +2,21 @@
 # -*- coding: utf-8 -*- 
 
 '''
-	surfaceWaveRelocation.py version 1.0 (original 07 Mar, 2014)
+	surfaceWaveRelocation.py version 1.0.1 (original 07 Mar, 2014)
 				
 		by Mike Cleveland
 	
-	Last edit: 06 Nov 2014 (KMC)
+	Last edit: 14 Nov 2014 (KMC)
+	
+	14 Nov 2014 - Plot of traveltime difference versus azimuth has been improved to show
+					a plot of the correlation coefficients of each point and the initial
+					and optimized cosine curve. I don't think this curves are right yet,
+					they seem like they could fit the data better.
+					
+					A histogram of the results and map of the improved locations needs to
+					be added.
+					
+					Calculation of relative magnitudes should also be included.
 
 '''
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
@@ -22,7 +32,12 @@ import glob
 import h5py
 import numpy as np
 from numpy.fft import rfft, irfft
+
 import matplotlib.pyplot as plt
+import matplotlib as mpl
+mpl.rcParams['pdf.fonttype'] = 42	# Set font so it can be edited in Illustrator
+mpl.rcParams['ps.fonttype'] = 42
+
 from copy import deepcopy
 from scipy.linalg import lapack 
 
@@ -47,26 +62,37 @@ class Waveforms():
 
 		self.settings = {}
 
-		self.settings['path'] = None
-		self.settings['pathPrefix'] = None
-		self.settings['dataSubDir'] = None
+		self.settings['path'] = './'
+		self.settings['pathPrefix'] = '/E*'
+		self.settings['dataSubDir'] = 'Dsp'
+		self.settings['fileSuffix'] = '.sac'
+
+		self.settings['wavesDir'] = './'
 		
-		self.settings['shortPeriod'] = None
-		self.settings['longPeriod'] = None
+		self.settings['shortPeriod'] = 30
+		self.settings['longPeriod'] = 80
 
-		self.settings['rGvLow'] = None
-		self.settings['rGvHi'] = None
-		self.settings['gGvLow'] = None
-		self.settings['gGvHi'] = None
+		self.settings['rGvLow'] = 3.0
+		self.settings['rGvHi'] = 5.0
+		self.settings['gGvLow'] = 3.0
+		self.settings['gGvHi'] = 5.0
+		
+		self.settings['slowness'] = 0.25
 
-		self.settings['quality'] = None
+		self.settings['quality'] = False
 
 		self.settings['channels'] = []
 
-		self.settings['linkDist'] = None
-		self.settings['minCC'] = None
-		self.settings['minLinks'] = None
-		self.settings['minAZ'] = None
+		self.settings['linkDist'] = 0
+		self.settings['minCC'] = 0
+		self.settings['minLinks'] = 0
+		self.settings['minAZ'] = 0
+		
+		self.settings['weightByDistance'] = False
+		self.settings['zeroCentroidWt'] = 0.0
+		self.settings['minLengthWt'] = 0.0
+
+		self.settings['gc2km'] = 111.19
 		
 		self.waveforms = {}
 
@@ -236,8 +262,9 @@ class DDObservation(object):
 			aE = self.aEvent
 			bE = self.bEvent
 			hSlowness = self.hSlowness
-			
-			deg_to_rad = np.arccos(-1.0) / 180.0
+
+			deg_to_rad = settings['deg_to_rad']
+# 			deg_to_rad = np.arccos(-1.0) / 180.0
 		
 			## event 01 ##
 			az          = aE.az
@@ -346,6 +373,114 @@ class CCLog():
 		 print >>self.ccLog, eventID + staLoc + eventLocs + distAz + dtValue+ results
 	def close(self):
 		self.ccLog.close()
+
+class Linefit():
+	'''
+	 lineFit.c
+ 
+	 Created by Charles Ammon on Fri Apr 16 2004.
+	 Copyright (c) 2004 Charles Ammon. All rights reserved.
+		(converted to Python by Mike Cleveland, 14 Nov 2014)
+ 
+	 Simple line fit using perpendicular distances.
+	'''
+	def __init__(self,xDataArray=[],yDataArray=[],weightArray=[]):
+		self.slope = None
+		self.intercept = None
+		self.covariance = np.zeros(shape=(2,2))
+		self.misfit = None
+		
+		if (len(xDataArray) == len(yDataArray)) and (len(xDataArray) == len(weightArray)):
+			self.xData = np.array(xDataArray,dtype=np.float64)
+			self.yData = np.array(yDataArray,dtype=np.float64)
+		
+			self.weights = np.array(weightArray,dtype=np.float64)
+					
+		else:
+			print 'xDataArray, yDataArray, and/or weightArray not equal lengths'
+
+			self.xData = np.array([],dtype=np.float64)
+			self.yData = np.array([],dtype=np.float64)
+		
+			self.weights = np.array([],dtype=np.float64)
+
+		self.n = len(self.xData)
+
+		self.misfit = None
+	def computePerpLineFit(self):
+		n = self.n
+	
+		sumx2= np.sum(self.xData * self.xData)
+		sumy2= np.sum(self.yData * self.yData)
+	
+		sumxy= np.sum(self.xData * self.yData)
+
+		xbar = np.mean(self.xData)
+		ybar = np.mean(self.yData)
+		
+		B = 0.5 * (sumy2-n*ybar*ybar - sumx2-n*xbar*xbar) / ( n*xbar*ybar - sumxy )
+	
+		## Check both branches of sqrt ##
+		b1 = -B + np.sqrt(B*B+1)
+		a1 = ybar - b1 * xbar
+		b2 = -B - np.sqrt(B*B+1)
+		a2 = ybar - b2 * xbar
+	
+		mf1 = self.lfMisfit(b1,a1)
+		mf2 = self.lfMisfit(b2,a2)
+	
+		if (mf1 < mf2):
+			self.slope = b1
+			self.intercept = a1
+			self.misfit = mf1
+		
+		else:
+			self.slope = b2
+			self.intercept = a2
+			self.misfit = mf2
+	## this function uses the formulas for the vertical misfits ##
+	def computeWtLineFit(self):
+		sumx = np.sum(self.weights * self.xData)
+		sumx2= np.sum(self.weights * self.xData * self.xData)
+
+		sumy = np.sum(self.weights * self.yData)
+		sumy2= np.sum(self.weights * self.yData * self.yData)
+
+		sumxy= np.sum(self.weights * self.xData * self.yData)
+
+		sumw = np.sum(self.weights)
+	
+		D = sumw * sumx2 - sumx*sumx
+	
+		A = (sumx2*sumy - sumx * sumxy) / D
+		B = (sumw*sumxy - sumx * sumy ) / D
+	
+		self.slope     = B
+		self.intercept = A
+		self.misfit    = self.lfMisfit(B,A)
+	def computeItWtLineFit(self, nIter=3):
+	
+		self.computeWtLineFit()
+	
+		for i in np.arange(0,nIter):
+			self.adjustWeights()
+			self.computeWtLineFit()
+	def lfMisfit(self, slope, intercept):
+		vmisfit = self.weights * (self.yData - (slope*self.xData + intercept))
+		pmisfit = vmisfit*vmisfit
+		sumwt = np.sum(self.weights)
+	
+		return np.sum(pmisfit) / sumwt
+	def adjustWeights(self, cutoff = 1.0):
+		cutoff = 1.0
+	
+		self.weights = np.ones(len(self.xData))
+	
+		vmisfit = np.abs(self.yData - (self.slope*self.xData + self.intercept))
+	
+		index = np.where(vmisfit > cutoff)[0]
+	
+		self.weights[index] = 1.0 / vmisfit[index]
 		
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
 ## 1. Prep Data ##
@@ -358,7 +493,7 @@ def prepData(dataStruct):
 	global settings
 	
 	##~~~ QC, Prepare, and Save Data to HDF5 file ~~~##
-	events = glob.glob(settings['path']+settings['pathPrefix'])
+	events = glob.glob(settings['path']+settings['wavesDir']+settings['pathPrefix'])
 
 	for aEvent in events:
 		for aChan in settings['channels']:
@@ -464,7 +599,7 @@ def matchComputeCC(dataStruct):
 	ccLog = CCLog(fileName=settings['path'] + '/ccLog-All.txt')
 
 	## Read list of events ##
-	events = glob.glob(settings['path']+settings['pathPrefix']+'.h5')
+	events = glob.glob(settings['path']+settings['wavesDir']+settings['pathPrefix']+'.h5')
 
 	##~~~ Calculate cross-correlations ~~~##
 	## Loop over master events ## 
@@ -1670,65 +1805,27 @@ def reBuildEventInformation(ddEvent,newEvent,staID):
 ## 3. Plot Correlation Values ##
 from matplotlib.widgets import RadioButtons
 from matplotlib.widgets import CheckButtons
-def plotCorrValues(dataLog):
-	
-	events = sorted(dataLog.keys())
-	#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
-	global l_pick; global l_un; global aTitle; global fig
-	global settings
-	global aGlobal; global bGlobal
-	aGlobal = events[0]; bGlobal = events[1]	
-	#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
-	
-	fig, ax = plt.subplots()
-	
-	symbols = ['o','v','*']
-	l_pick = {}; l_un = {}
-	index = 0
-	for aChan in settings['channels']:
-		l_pick[aChan.upper()], = ax.plot([],[],symbols[index],lw=2,color='red')
-		l_un[aChan.upper()],  = ax.plot([],[],symbols[index],lw=0.5,color='gray')
-		index += 1
-	
-	ax.set_xlim([0,360])
-	ax.set_ylim([-50,50])
-	ax.xaxis.set_ticks(np.arange(0, 380, 20))
-	ax.grid(True)
-	zeroLine = ax.plot([0,360],[0,0],lw=1,color='black')
-	
-	titleText = aGlobal+' & '+bGlobal + '\nNot Linked'
-	aTitle = ax.text(.5,1.01,titleText,fontsize=15,transform=ax.transAxes,ha='center')
-
-	updatePlot(aGlobal,bGlobal,dataLog)
-
-	#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
-# 	plt.subplots_adjust(left=0.3)
-	fig2 = plt.figure(2)
-	
-	axcolor = 'lightgoldenrodyellow'
-	rax = plt.axes([0.05, 0.05, 0.45, 0.9],axisbg=axcolor)
-	radio = RadioButtons(rax, events, active=0)	
-	radio.on_clicked(aDataSet)
-
-	rax = plt.axes([0.505, 0.05, 0.45, 0.9], axisbg=axcolor)
-	radio2 = RadioButtons(rax, events, active=1)
-	radio2.on_clicked(bDataSet)
-	
-	#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
-
-	plt.show()
 
 def findAzLag(event_A,event_B,log,set='accepted'):
-	azimuth = {}; lag = {}
+	azimuth = {}; lag = {}; cc = {}
+	evDist = None; evAz = None
+	
 	for a in log[event_A][event_B][set]:
 		tempAz  = log[event_A][event_B][set][a]['aEvent']['az']
 		tempLag = log[event_A][event_B][set][a]['lag']
+		tempCC = log[event_A][event_B][set][a]['normCC']
+
+		evDist = log[event_A][event_B][set][a]['abEvDist']
+		evAz = log[event_A][event_B][set][a]['abEvAz']
+		
 		chan = log[event_A][event_B][set][a]['channel']
 		if chan not in azimuth:
 			azimuth[chan] = []
 			lag[chan] = []
+			cc[chan] = []
 		azimuth[chan].append(tempAz)
 		lag[chan].append(tempLag)
+		cc[chan].append(tempCC)
 	
 	if set=='accepted':
 		links = {}
@@ -1748,7 +1845,7 @@ def findAzLag(event_A,event_B,log,set='accepted'):
 	evLocs.append(log[event_A][event_B][tSet][temp[0]]['bEvent']['lat'])
 	evLocs.append(log[event_A][event_B][tSet][temp[0]]['bEvent']['lon'])
 		
-	return azimuth,lag,links,evLocs
+	return azimuth,lag,cc,links,evLocs,evDist,evAz
 def updatePlot(aEvent,bEvent,log):
 	
 	if bEvent in log[aEvent]:
@@ -1806,6 +1903,8 @@ def plotAllCorrValues(log):
 	
 	plotPath = settings['path'] + '/CorrPlots/'
 	makeDir(plotPath)
+	
+	azimuthArray = np.arange(0, 380, 30)
 		
 	events = sorted(log.keys())
 	for aEvent in events:
@@ -1818,12 +1917,28 @@ def plotAllCorrValues(log):
 		for bEvent in events:
 			if aEvent != bEvent:
 
+				##~~~ ax1: Plot Traveltime Difference (s) vs Azimuth (deg) ~~~##
+				##~~~ ax2: Plot Traveltime Difference (s) vs Azimuth (deg) ~~~##
+				ax1 = plt.subplot2grid((5,1),(0,0),rowspan=4)
+				ax2 = plt.subplot2grid((5,1),(4,0))
+
 				if bEvent in log[aEvent]:
-					azimuth_pick,lag_pick,links,locs = findAzLag(aEvent,bEvent,log,set='accepted')
-					azimuth_un,lag_un,dummy,dummy = findAzLag(aEvent,bEvent,log,set='unused')
-	
-					fig, ax = plt.subplots()
-	
+					azimuth_pick,lag_pick,cc_pick,links,locs,evDist1,evAz1 = \
+										findAzLag(aEvent,bEvent,log,set='accepted')
+					azimuth_un,lag_un,cc_un,dummy,dummy,evDist2,evAz2 = \
+										findAzLag(aEvent,bEvent,log,set='unused')
+					
+					## Define distance and azimuth between two events ##
+					if evDist1:
+						evDist = evDist1
+						evAz   = evAz1
+					else:
+						evDist = evDist2
+						evAz   = evAz2
+						
+					## Plot measurements ##
+					obsAz_P = []; obsLag_P = []
+					obsAz_A = []; obsLag_A = []
 					symbols = ['o','v','*']
 					index = 0
 					for aChan in settings['channels']:
@@ -1832,45 +1947,152 @@ def plotAllCorrValues(log):
 						if aChan in azimuth_pick:
 							pick_x = azimuth_pick[aChan]
 							pick_y = lag_pick[aChan]
+							pick_y2 = cc_pick[aChan]
+							
+							obsAz_P += pick_x
+							obsLag_P += pick_y
+
+							obsAz_A += pick_x
+							obsLag_A += pick_y
+			
 						else:
 							pick_x = []
 							pick_y = []
+							pick_y2 = []
 							
 						if aChan in azimuth_un:
 							unpick_x = azimuth_un[aChan]
 							unpick_y = lag_un[aChan]
+							unpick_y2 = cc_un[aChan]
+
+							obsAz_A += unpick_x
+							obsLag_A += unpick_y
+							
 						else:
 							unpick_x = []
 							unpick_y = []
+							unpick_y2 = []
 
-						ax.plot(pick_x,pick_y,symbols[index],lw=2,color='red')
-						ax.plot(unpick_x,unpick_y,symbols[index],lw=0.5,color='gray')
+						ax1.plot(pick_x,pick_y,symbols[index],lw=2,color='red')
+						ax1.plot(unpick_x,unpick_y,symbols[index],lw=0.5,color='gray')
+
+						ax2.plot(pick_x,pick_y2,symbols[index],lw=2,color='red')
+						ax2.plot(unpick_x,unpick_y2,symbols[index],lw=0.5,color='gray')
+
 						index += 1
-		
-					linkT = ''
-					for aChan in links:
-						if aChan != 'total':
-							linkT = linkT+aChan+': '+str(links[aChan])+' '
-					linkT = linkT+'total'+': '+str(links['total'])+' '
-					titleText = aEvent+' & '+bEvent + '\nLinks: '+linkT
+
+					## Plot initial locations sine curve ##
+					azRange = np.arange(0, 380, 2)
+					initAmp   = settings['slowness'] * evDist
+					initPhase = settings['deg_to_rad'] * evAz
+					initXdata,initYdata = calcSineCurve(azRange,initAmp,initPhase,0)
+					ax1.plot(initXdata,initYdata,'gray')
+					
+					## Plot improved optimized locations sine curve for accepted observations ##
+					if len(obsAz_P) > 0:
+						(optX_P,optY_P,phaseEst_P,amplitudeEst_P,biasEst_P) = \
+								fitSine(obsAz_P,obsLag_P)						
+						ax1.plot(optX_P,optY_P,'k')
+						stats =  '%-17s Distance  Azimuth\n' % ('')
+						stats += '%-12s %5.1f km  %5.1f$^{\circ}$\n' % ('Initial',evDist,evAz)
+						stats += '%-8s %5.1f km  %5.1f$^{\circ}$\n' % \
+							('Optimal',amplitudeEst_P*settings['slowness'],phaseEst_P)
+						stats += 'OT Shift    %5.1f s\n' % (biasEst_P)
+# 						stats += 'RMS Misfit  %0.1f s' % (0)
+						stats += 'gr=Inititial, blk=Optimal'
+# 						stats += 'gr=Init,blk=OptPick,gr=OptAll'
+						
+						bbox_props = dict(boxstyle="round", fc="w", ec="0.5", alpha=0.75)
+						ax1.text(.02,.98,stats,fontsize=8,bbox=bbox_props, \
+									transform=ax1.transAxes,ha='left',va='top')
+
+					## Plot improved optimized locations sine curve for all observations ##
+# 					if len(obsAz_A) > 0:
+# 						(optX_A,optY_A,phaseEst_A,amplitudeEst_A,biasEst_A) = \
+# 							fitSine(obsAz_A,obsLag_A)						
+# 						ax1.plot(optX_A,optY_A,':g')
+						
+					## Write titles with number of links ##
+					if evDist <= settings['linkDist']:
+						linkT = ''
+						for aChan in links:
+							if aChan != 'total':
+								linkT = linkT+aChan+': '+str(links[aChan])+' '
+						linkT = linkT+'total'+': '+str(links['total'])+' '
+						titleText = aEvent+' & '+bEvent + '\nLinks: '+linkT
+					
+					else:
+						titleText = aEvent+' & '+bEvent + \
+								'\nNot Linked: Event distance %0.2f km.' % (evDist)
 
 				else:
-					ax.plot([],[])
-					ax.plot([],[])
+					ax1.plot([],[])
+					ax2.plot([],[])
 
-					titleText = aEvent+' & '+bEvent + '\nNot Linked'
+					titleText = aEvent+' & '+bEvent + '\nNot Linked: No common links.'
 					aTitle.set_text(titleText)
 
-				ax.set_xlim([0,360])
-				ax.set_ylim([-50,50])
-				ax.xaxis.set_ticks(np.arange(0, 380, 20))
-				ax.grid(True)
-				zeroLine = ax.plot([0,360],[0,0],lw=1,color='black')
+				##~~~ ax1: Plot Traveltime Difference (s) vs Azimuth (deg) ~~~##
+				ax1.set_xlim([0,360])
+				ax1.xaxis.set_ticks(azimuthArray)
+				ax1.xaxis.set_ticklabels([])
+				
+				ax1.set_ylim([-50,50])
+				
+				ax1.grid(True)
+				
+				zeroLine = ax1.plot([0,360],[0,0],lw=1,color='black')
 
-				aTitle = ax.text(.5,1.01,titleText,fontsize=15,transform=ax.transAxes,ha='center')
+				aTitle = ax1.text(.5,1.01,titleText,fontsize=15,transform=ax1.transAxes,ha='center')
+				
+				ax1.set_ylabel('Traveltime Difference (s)')
 
+				##~~~ ax2: Plot Traveltime Difference (s) vs Azimuth (deg) ~~~##				
+				ax2.set_xlim([0,360])
+				ax2.xaxis.set_ticks(azimuthArray)
+				
+				ax2.set_ylim([0.0,1.1])
+				ax2.yaxis.set_ticks(np.arange(0, 1.2, 0.5))
+				
+				ax2.grid(True)
+
+				ccThreshLine = ax2.plot([0,360],[settings['minCC'],settings['minCC']],lw=1,color='black')
+
+				ax2.set_ylabel('CCorrelation')
+				ax2.set_xlabel('Azimuth ($^{\circ}$)')
+
+				##~~~ Plot ~~~##
 				plt.savefig(plotEventPath+'observations_{}-{}.pdf'.format(aEvent,bEvent))
+				plt.clf()
+				plt.close()
 
+def fitSine(azList,yList):
+	
+	deg_to_rad = settings['deg_to_rad']
+	azList = np.array(azList) * deg_to_rad
+	
+	b = np.matrix(yList).T
+	rows = [ [np.sin(az), np.cos(az), 1] for az in azList]
+	A = np.matrix(rows)
+	
+	(w,residuals,rank,sing_vals) = np.linalg.lstsq(A,b)
+	
+	phase = np.arctan2(w[1,0],w[0,0])*180.0/np.pi
+	amplitude = np.linalg.norm([w[0,0],w[1,0]],2)
+	shift = w[2,0]
+
+	azRange = np.arange(0, 380, 2)
+	optXdata,optYdata = calcSineCurve(azRange,amplitude,phase,shift)
+	
+	return optXdata,optYdata,phase,amplitude,shift
+def calcSineCurve(azRange,amplitude,phase,shift):
+	deg_to_rad = settings['deg_to_rad']
+	
+	xdata = azRange
+	ydata = amplitude * np.sin(deg_to_rad *(azRange - phase)) + shift
+
+	return xdata,ydata
+	
 ## io ##
 def save2HDF5(dataStruct):
 	global settings
@@ -1886,7 +2108,7 @@ def save2HDF5(dataStruct):
 			for aTrace in dataStruct.waveforms[aChan]:
 				
 				eventName = aTrace.origin.strftime('E%Y-%m-%d-%H-%M-%S')
-				fname = settings['path'] + '/'+ eventName + '.h5'
+				fname = settings['path'] + settings['wavesDir'] + '/' + eventName + '.h5'
 # 				fname = eventName + '.h5'
 				
 				if not ok:
@@ -1994,14 +2216,16 @@ dataStruct = Waveforms()
 
 ##~~~ Set Path ~~~##
 # dataStruct.settings['path'] = '/Users/mcleveland/Documents/Projects/Menard/EventSearch/Events/Graded/Test'
-dataStruct.settings['path'] = '/Users/mcleveland/Documents/Projects/Menard/EventSearch/Events/Graded/test2'
+# dataStruct.settings['path'] = '/Users/mcleveland/Documents/Projects/Menard/EventSearch/Events/Graded/test2'
+dataStruct.settings['path'] = '/Users/mcleveland/Documents/Projects/Menard/EventSearch/Events/Graded/Both'
+
 dataStruct.settings['pathPrefix'] = '/E*'
 # dataStruct.settings['dataSubDir'] = 'Dsp_Use'
 dataStruct.settings['dataSubDir'] = 'Dsp'
 dataStruct.settings['fileSuffix'] = '.sac'
 
-##~~~ HDF5 file save location ~~~##
-directory = 'Waveforms/'
+##~~~ SAC and HDF5 file save location ~~~##
+dataStruct.settings['wavesDir']  = '/Waveforms'
 
 ##~~~ Define Period Band ~~~##
 dataStruct.settings['shortPeriod'] = 30
@@ -2009,12 +2233,12 @@ dataStruct.settings['longPeriod']  = 80
 
 ##~~~ Define Group Velocity Range (km/s) ~~~##
 	# Rayleigh #
-dataStruct.settings['rGvLow'] = 3
-dataStruct.settings['rGvHi']  = 5
+dataStruct.settings['rGvLow'] = 3.0
+dataStruct.settings['rGvHi']  = 5.0
 
 	# Love #
-dataStruct.settings['gGvLow'] = 3
-dataStruct.settings['gGvHi']  = 5
+dataStruct.settings['gGvLow'] = 3.0
+dataStruct.settings['gGvHi']  = 5.0
 
 ##~~~ Define Slowness ~~~##
 dataStruct.settings['slowness'] = 0.24
@@ -2049,18 +2273,21 @@ dataStruct.settings['minLengthWt'] = 0.000
 ##~~~ Define GCarc to km conversion ~~~##
 dataStruct.settings['gc2km'] = 111.19
 
+##~~~ Define degrees to radians conversion ~~~##
+dataStruct.settings['deg_to_rad'] = np.arccos(-1.0) / 180.0
+
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
 ##~~~ Work Flow (which steps to include) ~~~##
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
 # workFlow = [1,2,3]
-# workFlow = [4,6]
+workFlow = [4,5,6]
 # workFlow = [1,2,3,4,6]
-workFlow = [1,2,3,4,5,6]
+# workFlow = [1,2,3,4,5,6]
 
 global settings
 settings = dataStruct.settings
 
-# pdb.set_trace()
+pdb.set_trace()
 
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
@@ -2072,6 +2299,7 @@ if 1 in workFlow:
 
 ##~~~ 2. Find *All* Viable Links, Compute CC, Write *ALL* to Text, Create Digital ~~~##
 ##~~~		Log With Links Filtered by Linking Distance and Minimum CC Criteria   ~~~##
+##~~~		(reads data in from HDF5 files generated in prepData()   ~~~##
 if 2 in workFlow:
 	print '\nComputing correlation values\n'
 	dataLog,ddArray,myEventArray = matchComputeCC(dataStruct)
@@ -2094,7 +2322,6 @@ if 4 in workFlow:
 if 5 in workFlow:
 	print '\nPlotting data\n'
 	plotAllCorrValues(dataLog)
-# 	plotCorrValues(dataLog)
 
 ##~~~ 6. Perform the iteration ~~~##
 if 6 in workFlow:
