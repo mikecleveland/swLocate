@@ -143,18 +143,18 @@ dictionary is made global so that all the functions can see it.
 	This step finds all viable links (based only on matching stations) and computes the
 	cross-correlation. This produces three structures:
 	
-	a. dataLog (dictionary): All of the observations are then stored to the dataLog dictionary. 
-	&nbsp;&nbsp;&nbsp;The observations are divided between 'accepted' and 'unused' based linking distance
+	a. *dataLog* (dictionary): All of the observations are then stored to the dataLog dictionary. 
+		The observations are divided between 'accepted' and 'unused' based linking distance
 		and minimum correlation coefficient (function: shouldLink). But, all observations 
 		are stored, so at a later time the settings can be changed and the use 'accepted' 
 		data updated without needing to re-process the data.
 	
-	b. ddArray (array): Array of DDObservation objects. Only the accepted observations
+	b. *ddArray* (array): Array of DDObservation objects. Only the accepted observations
 		are included in this array. However, the user can change linking parameters and
 		rebuild this array with:
 			ddArray = reBuildDifferenceArray(dataLog,myEventArray)
 	
-	c. myEventArray (object): EventArray object that is basically and array of Event objects,
+	c. *myEventArray* (object): EventArray object that is basically and array of Event objects,
 		storing information about all of the events being investigated. Locations of these
 		events are updated in the inversion processes.
 	
