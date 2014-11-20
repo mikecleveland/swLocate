@@ -171,6 +171,20 @@ dictionary is made global so that all the functions can see it.
 	Plots all correlation coefficient vs azimuth plots.
 	
 6. Perform the iteration
-	Performs the inversion.
+	Performs the inversion. Histogram plots of mean absolute misfit and shifts from
+	NEIC epicenter and origin time are produced.
 
+7. Plot Results
+	A GMT script is written and run (note: this is currently written for 
+	versions of GMT earlier than GMT5, however, the code can easily be edited for GMT5)
+	producing a PDF map of the original (gray) and new (red) locations, with a line for
+	each event showing how it moved. By default, the events (initial and new) are scaled
+	by magnitude, following Utsu & Seki.
+	
+	Three KML files (used in GoogleEarth) are also produced. One file includes the original
+	locations, one the new locations, and a third with lines connecting the new to the
+	original. Each marker also includes event information, visible by clicking on the
+	marker in GoogleEarth. By default, the original locations (gray) are not scaled by 
+	magnitude, however, the new locations (red) are.
+	but the new
 

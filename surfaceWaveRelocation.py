@@ -6,17 +6,26 @@
 				
 		by Mike Cleveland
 	
-	Last edit: 14 Nov 2014 (KMC)
+	Last edit: 19 Nov 2014 (KMC)
 	
-	14 Nov 2014 - Plot of traveltime difference versus azimuth has been improved to show
-					a plot of the correlation coefficients of each point and the initial
-					and optimized cosine curve. I don't think this curves are right yet,
-					they seem like they could fit the data better.
-					
-					A histogram of the results and map of the improved locations needs to
-					be added.
+	14 Nov 2014 (KMC) - Plot of traveltime difference versus azimuth has been improved to 
+					show a plot of the correlation coefficients of each point and the 
+					initial and optimized cosine curve. I don't think this curves are 
+					right yet, they seem like they could fit the data better. Also, no 
+					weighting has been applied when optimizing these curves.
 					
 					Calculation of relative magnitudes should also be included.
+	
+	17 Nov 2014 (KMC) - Added histogram plot of mean absolute misfit and shifts from
+					NEIC epicenter and origin time.
+					
+	19 Nov 2014 (KMC) - Added GMT plot (earlier than GMT5) and KML files (GoogleEarth) of 
+					new locations
+					
+	To Be Done:
+		1. Apply weights in relocation
+		2. Make sure initial cosine curves are right
+		3. Relative magnitudes
 
 '''
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
@@ -37,6 +46,8 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 mpl.rcParams['pdf.fonttype'] = 42	# Set font so it can be edited in Illustrator
 mpl.rcParams['ps.fonttype'] = 42
+mpl.rcParams['font.family'] = 'serif'
+mpl.rcParams['font.sans-serif'] = ['Helvetica']  
 
 from copy import deepcopy
 from scipy.linalg import lapack 
@@ -122,6 +133,7 @@ class Event(ps.Trace):
 		self.evLatInitial = trace.evLat  
 		self.evLonInitial = trace.evLon  
 		self.evDepth = trace.evDepth
+		self.evDepthInitial = trace.evDepth
 		self.mag     = trace.mag    
 
 		self.distance = trace.distance
@@ -227,6 +239,7 @@ class DDObservation(object):
 		
 		self.dtObs = float()
 		self.dtPredicted = float()
+		self.dtInitPredicted = float()
 
 		self.qualityValue = float()
 
@@ -485,6 +498,7 @@ class Linefit():
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
 ## 1. Prep Data ##
 # prepDataSets.py
+## 1. QC, Prepare, and Save *ALL* Data to HDF5 file ##
 def prepData(dataStruct):
 	'''
 	Performs quality control, filters, cuts, and saves waveforms to HDF5 files organized
@@ -586,7 +600,8 @@ def checkWaveform(trace):
 		
 	return ok,shortTime,longTime
 
-## 2. Calculate Cross-Correlation Values for All Pairs ##
+
+## 2. Find *All* Viable Links, Compute CC, Write *ALL* to Text, Create Digital Log ##
 def matchComputeCC(dataStruct):
 	global settings
 
@@ -781,6 +796,139 @@ def getOptimalShift(aTrace,bTrace):
 # 	pdb.set_trace()
 	
 	return timeShift,ccNorm,ccUnNorm,ccUnNormInv,aSum,bSum
+def shouldLink(trace01,trace02,normCC):
+	global settings
+
+		## Calculate distance and azimuth between events ##
+	(dist,az,baz) = gps2DistAzimuth(trace01.evLat,trace01.evLon,trace02.evLat,trace02.evLon)		             
+	dist = dist * 0.001
+	
+	if (dist <= settings['linkDist']) and (normCC >= settings['minCC']):
+		return True
+	
+	else:
+		return False
+
+def buildDifferenceArray(ddArray,eventA,eventB,weight,lag,nCC,unCC,powerA,powerB):
+	global settings
+	
+	slowness = settings['slowness']
+	
+	predictedShift = slowness * (eventA.gcarc - eventB.gcarc) * settings['gc2km'] + \
+		(eventA.originTimeShift - eventB.originTimeShift)
+
+	theDD = DDObservation()
+	
+	theDD.aEvent = eventA
+	theDD.bEvent = eventB
+
+	theDD.hSlowness = slowness
+	theDD.ccorAmplitude = nCC
+	theDD.ccorUnnormalizedAmplitude = unCC
+
+	theDD.dtObs = lag
+# 	theDD.dtPredicted = predictedShift
+	theDD.computePredictedDifference()
+	theDD.dtInitPredicted = theDD.dtPredicted
+	theDD.computeDerivatives()
+	theDD.qualityValue = nCC
+
+	theDD.powerSignalA = powerA
+	theDD.powerSignalB = powerB
+	
+	ddArray.append(theDD)
+def reBuildDifferenceArray(dataLog,myEventArray):
+	global settings
+	
+	newDDArray = []
+	
+	for a in sorted(dataLog):
+
+		for b in sorted(dataLog[a]):
+			
+			azCover = dataLog[a][b]['links']['azCover']['total']['cover1']
+			links = dataLog[a][b]['links']['totalLinks']['total']
+			if (azCover >= settings['minAZ']) and (links >= settings['minLinks']):
+			
+				for aSet in ['unused','accepted']:
+					for link in sorted(dataLog[a][b][aSet]):
+						aLink = dataLog[a][b][aSet][link]
+						
+						eventA = myEventArray.events[myEventArray.eventIndexStr(a)]
+						eventB = myEventArray.events[myEventArray.eventIndexStr(b)]
+
+						if shouldLink(eventA,eventB,aLink['normCC']):
+														
+							slowness = settings['slowness']
+	
+							predictedShift = slowness * (eventA.gcarc - eventB.gcarc) * \
+								settings['gc2km'] + \
+								(eventA.originTimeShift - eventB.originTimeShift)
+
+							theDD = None
+							theDD = DDObservation()
+
+							theDD.aEvent = deepcopy(eventA)
+							theDD.bEvent = deepcopy(eventB)
+							theDD.aEvent = reBuildEventInformation(theDD.aEvent,aLink,link)
+							theDD.bEvent = reBuildEventInformation(theDD.bEvent,aLink,link)
+
+							theDD.hSlowness = slowness
+							theDD.ccorAmplitude = aLink['normCC']
+							theDD.ccorUnnormalizedAmplitude = aLink['unnormCC']
+
+							theDD.dtObs = aLink['lag']
+# 							theDD.dtPredicted = predictedShift
+							theDD.computePredictedDifference()
+		
+							theDD.computeDerivatives()
+							theDD.qualityValue = aLink['normCC']
+
+							theDD.powerSignalA = aLink['powerA']
+							theDD.powerSignalB = aLink['powerB']
+	
+							newDDArray.append(theDD)
+
+	return newDDArray
+def reBuildEventInformation(ddEvent,newEvent,staID):
+	ddEvent.stationID   = staID
+	ddEvent.network     = newEvent['network']
+	ddEvent.station     = newEvent['station']
+	ddEvent.staLocation = newEvent['location']
+	ddEvent.channel     = newEvent['channel']
+	ddEvent.staLat      = newEvent['staLoc']['lat']
+	ddEvent.staLon      = newEvent['staLoc']['lon']
+	ddEvent.staElev     = newEvent['staLoc']['elev']
+	ddEvent.staDepth    = newEvent['staLoc']['depth']
+
+	ddEvent.updateOrigin(ddEvent.evLat,ddEvent.evLon)
+		
+	'''
+	The event information from myEventArray may not be the same station information
+		so unrequired information will be removed.
+	'''
+	ddEvent.calibration = None
+	ddEvent.componentAzNorth = None
+	ddEvent.componentIncidentAngleVertical = None
+	ddEvent.quality    = None
+	ddEvent.idep       = None
+	ddEvent.npts       = None
+	ddEvent.sampleRate = None
+	ddEvent.nyquist    = None
+	ddEvent.delta      = None
+	ddEvent.startTime  = None
+	ddEvent.endTime    = None
+	ddEvent.refTime    = None
+	ddEvent.b          = None
+	ddEvent.e          = None
+	ddEvent.minAmp     = None
+	ddEvent.maxAmp     = None
+	ddEvent.meanAmp    = None
+	ddEvent.fileType   = None
+	ddEvent.processing = None
+
+	return ddEvent
+
 def updateDict(log,aName,bName,channel=None,step=0):
 	if step == 1:
 
@@ -865,6 +1013,7 @@ def populateResultsDict(log,aTrace,bTrace,weight,lag,normCC,unnormCC,powerA,powe
 
 	log['abEvDist'] = dist
 	log['abEvAz'] = az
+	log['baEvAz'] = baz
 
 	log['staLoc'] = {}
 	log['staLoc']['lat'] = aTrace.staLat
@@ -900,7 +1049,7 @@ def populateResultsDict(log,aTrace,bTrace,weight,lag,normCC,unnormCC,powerA,powe
 	log['powerB'] = powerB
 	
 	return log
-##
+
 def testParse(myEventArray,ddArray,matchLoc=True):
 	global settings
 
@@ -1041,20 +1190,244 @@ def testParse(myEventArray,ddArray,matchLoc=True):
 	ccLog.close()
 	print '\nTotal Obs:  {}\nTotal Read: {}\n'.format(totalObs,len(tempDDArray))
 	return tempDDArray
-##
-def shouldLink(trace01,trace02,normCC):
-	global settings
 
-		## Calculate distance and azimuth between events ##
-	(dist,az,baz) = gps2DistAzimuth(trace01.evLat,trace01.evLon,trace02.evLat,trace02.evLon)		             
-	dist = dist * 0.001
+
+## 5. Plot Correlation Values ##
+def plotAllCorrValues(log):
 	
-	if (dist <= settings['linkDist']) and (normCC >= settings['minCC']):
-		return True
+	plotPath = settings['path'] + '/CorrPlots/'
+	makeDir(plotPath)
 	
+	azimuthArray = np.arange(0, 380, 30)
+		
+	events = sorted(log.keys())
+	for aEvent in events:
+		
+		print 'Plotting all {} pairs'.format(aEvent)
+		
+		plotEventPath = plotPath + aEvent + '/'
+		makeDir(plotEventPath)
+
+		for bEvent in events:
+			if aEvent != bEvent:
+
+				##~~~ ax1: Plot Traveltime Difference (s) vs Azimuth (deg) ~~~##
+				##~~~ ax2: Plot Traveltime Difference (s) vs Azimuth (deg) ~~~##
+				ax1 = plt.subplot2grid((5,1),(0,0),rowspan=4)
+				ax2 = plt.subplot2grid((5,1),(4,0))
+
+				if bEvent in log[aEvent]:
+					azimuth_pick,lag_pick,cc_pick,links,locs,evDist1,evAz1 = \
+										findAzLag(aEvent,bEvent,log,set='accepted')
+					azimuth_un,lag_un,cc_un,dummy,dummy,evDist2,evAz2 = \
+										findAzLag(aEvent,bEvent,log,set='unused')
+					
+					## Define distance and azimuth between two events ##
+					if evDist1:
+						evDist = evDist1
+						evAz   = evAz1
+					else:
+						evDist = evDist2
+						evAz   = evAz2
+						
+					## Plot measurements ##
+					obsAz_P = []; obsLag_P = []
+					obsAz_A = []; obsLag_A = []
+					symbols = ['o','v','*']
+					index = 0
+					for aChan in settings['channels']:
+						aChan = aChan.upper()
+						
+						if aChan in azimuth_pick:
+							pick_x = azimuth_pick[aChan]
+							pick_y = lag_pick[aChan]
+							pick_y2 = cc_pick[aChan]
+							
+							obsAz_P += pick_x
+							obsLag_P += pick_y
+
+							obsAz_A += pick_x
+							obsLag_A += pick_y
+			
+						else:
+							pick_x = []
+							pick_y = []
+							pick_y2 = []
+							
+						if aChan in azimuth_un:
+							unpick_x = azimuth_un[aChan]
+							unpick_y = lag_un[aChan]
+							unpick_y2 = cc_un[aChan]
+
+							obsAz_A += unpick_x
+							obsLag_A += unpick_y
+							
+						else:
+							unpick_x = []
+							unpick_y = []
+							unpick_y2 = []
+
+						ax1.plot(pick_x,pick_y,symbols[index],lw=2,color='red')
+						ax1.plot(unpick_x,unpick_y,symbols[index],lw=0.5,color='gray')
+
+						ax2.plot(pick_x,pick_y2,symbols[index],lw=2,color='red')
+						ax2.plot(unpick_x,unpick_y2,symbols[index],lw=0.5,color='gray')
+
+						index += 1
+
+					## Plot initial locations sine curve ##
+					azRange = np.arange(0, 380, 2)
+					initAmp   = settings['slowness'] * evDist
+					initPhase = settings['deg_to_rad'] * evAz
+					initXdata,initYdata = calcSineCurve(azRange,initAmp,initPhase,0)
+					ax1.plot(initXdata,initYdata,'gray')
+					
+					## Plot improved optimized locations sine curve for accepted observations ##
+					if len(obsAz_P) > 0:
+						(optX_P,optY_P,phaseEst_P,amplitudeEst_P,biasEst_P) = \
+								fitSine(obsAz_P,obsLag_P)						
+						ax1.plot(optX_P,optY_P,'k')
+						stats =  '%-17s Distance  Azimuth\n' % ('')
+						stats += '%-12s %5.1f km  %5.1f$^{\circ}$\n' % ('Initial',evDist,evAz)
+						stats += '%-8s %5.1f km  %5.1f$^{\circ}$\n' % \
+							('Optimal',amplitudeEst_P*settings['slowness'],phaseEst_P)
+						stats += 'OT Shift    %5.1f s\n' % (biasEst_P)
+# 						stats += 'RMS Misfit  %0.1f s' % (0)
+						stats += 'gr=Inititial, blk=Optimal'
+# 						stats += 'gr=Init,blk=OptPick,gr=OptAll'
+						
+						bbox_props = dict(boxstyle="round", fc="w", ec="0.5", alpha=0.75)
+						ax1.text(.02,.98,stats,fontsize=8,bbox=bbox_props, \
+									transform=ax1.transAxes,ha='left',va='top')
+
+					## Plot improved optimized locations sine curve for all observations ##
+# 					if len(obsAz_A) > 0:
+# 						(optX_A,optY_A,phaseEst_A,amplitudeEst_A,biasEst_A) = \
+# 							fitSine(obsAz_A,obsLag_A)						
+# 						ax1.plot(optX_A,optY_A,':g')
+						
+					## Write titles with number of links ##
+					if evDist <= settings['linkDist']:
+						linkT = ''
+						for aChan in links:
+							if aChan != 'total':
+								linkT = linkT+aChan+': '+str(links[aChan])+' '
+						linkT = linkT+'total'+': '+str(links['total'])+' '
+						titleText = aEvent+' & '+bEvent + '\nLinks: '+linkT
+					
+					else:
+						titleText = aEvent+' & '+bEvent + \
+								'\nNot Linked: Event distance %0.2f km.' % (evDist)
+
+				else:
+					ax1.plot([],[])
+					ax2.plot([],[])
+
+					titleText = aEvent+' & '+bEvent + '\nNot Linked: No common links.'
+					aTitle.set_text(titleText)
+
+				##~~~ ax1: Plot Traveltime Difference (s) vs Azimuth (deg) ~~~##
+				ax1.set_xlim([0,360])
+				ax1.xaxis.set_ticks(azimuthArray)
+				ax1.xaxis.set_ticklabels([])
+				
+				ax1.set_ylim([-50,50])
+				
+				ax1.grid(True)
+				
+				zeroLine = ax1.plot([0,360],[0,0],lw=1,color='black')
+
+				aTitle = ax1.text(.5,1.01,titleText,fontsize=15,transform=ax1.transAxes,ha='center')
+				
+				ax1.set_ylabel('Traveltime Difference (s)')
+
+				##~~~ ax2: Plot Traveltime Difference (s) vs Azimuth (deg) ~~~##				
+				ax2.set_xlim([0,360])
+				ax2.xaxis.set_ticks(azimuthArray)
+				
+				ax2.set_ylim([0.0,1.1])
+				ax2.yaxis.set_ticks(np.arange(0, 1.2, 0.5))
+				
+				ax2.grid(True)
+
+				ccThreshLine = ax2.plot([0,360],[settings['minCC'],settings['minCC']],lw=1,color='black')
+
+				ax2.set_ylabel('CCorrelation')
+				ax2.set_xlabel('Azimuth ($^{\circ}$)')
+
+				##~~~ Plot ~~~##
+				plt.savefig(plotEventPath+'observations_{}-{}.pdf'.format(aEvent,bEvent))
+				plt.clf()
+				plt.close()
+def findAzLag(event_A,event_B,log,set='accepted'):
+	azimuth = {}; lag = {}; cc = {}
+	evDist = None; evAz = None
+	
+	for a in log[event_A][event_B][set]:
+		tempAz  = log[event_A][event_B][set][a]['aEvent']['az']
+		tempLag = log[event_A][event_B][set][a]['lag']
+		tempCC = log[event_A][event_B][set][a]['normCC']
+
+		evDist = log[event_A][event_B][set][a]['abEvDist']
+		evAz = log[event_A][event_B][set][a]['abEvAz']
+
+		chan = log[event_A][event_B][set][a]['channel']
+		if chan not in azimuth:
+			azimuth[chan] = []
+			lag[chan] = []
+			cc[chan] = []
+		azimuth[chan].append(tempAz)
+		lag[chan].append(tempLag)
+		cc[chan].append(tempCC)
+	
+	if set=='accepted':
+		links = {}
+		for aChan in log[event_A][event_B]['links']['totalLinks']:
+			links[aChan] = log[event_A][event_B]['links']['totalLinks'][aChan]
 	else:
-		return False
-#
+		links = []
+	
+	evLocs = []
+	if len(log[event_A][event_B]['accepted']) > 0:
+		tSet = 'accepted'
+	else:
+		tSet = 'unused'
+	temp = log[event_A][event_B][tSet].keys()
+	evLocs.append(log[event_A][event_B][tSet][temp[0]]['aEvent']['lat'])
+	evLocs.append(log[event_A][event_B][tSet][temp[0]]['aEvent']['lon'])
+	evLocs.append(log[event_A][event_B][tSet][temp[0]]['bEvent']['lat'])
+	evLocs.append(log[event_A][event_B][tSet][temp[0]]['bEvent']['lon'])
+		
+	return azimuth,lag,cc,links,evLocs,evDist,evAz
+def fitSine(azList,yList):
+	
+	deg_to_rad = settings['deg_to_rad']
+	azList = np.array(azList) * deg_to_rad
+	
+	b = np.matrix(yList).T
+	rows = [ [np.sin(az), np.cos(az), 1] for az in azList]
+	A = np.matrix(rows)
+	
+	(w,residuals,rank,sing_vals) = np.linalg.lstsq(A,b)
+	
+	phase = np.arctan2(w[1,0],w[0,0])*180.0/np.pi
+	amplitude = np.linalg.norm([w[0,0],w[1,0]],2)
+	shift = w[2,0]
+
+	azRange = np.arange(0, 380, 2)
+	optXdata,optYdata = calcSineCurve(azRange,amplitude,phase,shift)
+	
+	return optXdata,optYdata,phase,amplitude,shift
+def calcSineCurve(azRange,amplitude,phase,shift):
+	deg_to_rad = settings['deg_to_rad']
+	
+	xdata = azRange
+	ydata = amplitude * np.sin(deg_to_rad *(azRange - phase)) + shift
+
+	return xdata,ydata
+	
+
+## 6. Perform the iteration ##
 def doIteration(myEventArray,ddArray):
 	'''
 	Perform inversion.
@@ -1188,6 +1561,7 @@ def doIteration(myEventArray,ddArray):
     
 	
 	theLocationPerturbationsText = 'Location perturbations:\n'
+	theLocationPerturbationsText += 'index dt/dcolat dt/dlon dt/dz dt/dT0\n'
 
 	theLocationsText = 'Locations:\n'
 	theLocationsText += \
@@ -1298,58 +1672,40 @@ def buildInversionMatrixVectors(ddArray,myEventArray,nRows,nCols,ldb,nrhs,nDiffs
 	return A,b,p,x,dt,wtA
 def updateDDs(ddArray,eventArray,b,p):
 
-	theDDInfoText = 'Index Observed Predicted (obs-pred) weight DD_Obs DD_Pred:\n'
+	theDDInfoText =  '                 Final                             Initial\n'
+	theDDInfoText += 'Index Observed Predicted (obs-pred)   weight    DD_Obs   DD_Pred:\n'
 
+	residualsArray = []
+	
 	for i,dd in enumerate(ddArray):
 	
 		i01 = eventArray.eventIndex(dd.aEvent)
 		e01 = eventArray.events[i01]
-		dd.aEvent.updateOrigin(e01.evLat,e01.evLon)
+		dd.aEvent.updateOrigin(float(e01.evLat),float(e01.evLon))
 		dd.aEvent.originTimeShift = e01.originTimeShift
 		
 		i02 = eventArray.eventIndex(dd.bEvent)
 		e02 = eventArray.events[i02]
-		dd.bEvent.updateOrigin(e02.evLat,e02.evLon)
+		dd.bEvent.updateOrigin(float(e02.evLat),float(e02.evLon))
 		dd.bEvent.originTimeShift = e02.originTimeShift
-
-		theDDInfoText += ('%03d %9.3f %9.3f %9.3f %8.3f %9.3f %9.3f\n' % \
+		
+		theDDInfoText += ('%6d %9.3f %9.3f %9.3f %8.3f %9.3f %9.3f\n' % \
 							(i+1,b[i],p[i],(b[i]-p[i]),dd.weight,dd.dtObs,dd.dtPredicted))
+							
+		residualsArray.append([(dd.dtObs-dd.dtInitPredicted),(b[i]-p[i]),dd.weight])
 
 		dd.computePredictedDifference()
 		dd.weight = 1.0
 		
 		dd.computeDerivatives()
-
+	
+	residualPlot(residualsArray)
+	relocationPlot(eventArray)
+	
 	return theDDInfoText
-#
-def buildDifferenceArray(ddArray,eventA,eventB,weight,lag,nCC,unCC,powerA,powerB):
-	global settings
-	
-	slowness = settings['slowness']
-	
-	predictedShift = slowness * (eventA.gcarc - eventB.gcarc) * settings['gc2km'] + \
-		(eventA.originTimeShift - eventB.originTimeShift)
 
-	theDD = DDObservation()
-	
-	theDD.aEvent = eventA
-	theDD.bEvent = eventB
-
-	theDD.hSlowness = slowness
-	theDD.ccorAmplitude = nCC
-	theDD.ccorUnnormalizedAmplitude = unCC
-
-	theDD.dtObs = lag
-# 	theDD.dtPredicted = predictedShift
-	theDD.computePredictedDifference()
-	theDD.computeDerivatives()
-	theDD.qualityValue = nCC
-
-	theDD.powerSignalA = powerA
-	theDD.powerSignalB = powerB
-	
-	ddArray.append(theDD)
-def printInversionResults(initDDResid,singValues,locPert,ddInfo,finalLocations,wtMisfit,unwtMisfit):
+def printInversionResults(initDDResid,singValues,locPert,ddInfo,finalLocations,wtMisfit,
+		unwtMisfit):
 	global settings
 	
 	currentTime = str(datetime.datetime.now())
@@ -1709,389 +2065,187 @@ def plotInversionResults2(nEvents,iter,A,x,b,wtA,pStyle='split'):
 		plt.title('Numpy')		
 		
 	plt.tight_layout()
-##
-def reBuildDifferenceArray(dataLog,myEventArray):
+
+def residualPlot(residualsArray,directory='/Results/',loBin=-15.5,hiBin=15.5,numBins=32,
+		plotPrefix=None):
+	'''
+	Plot information from readRelocations
+		:residualsArray = (list) includes: [initial,final,weight]
+		:loBin = (float) lower histogram bin limit 
+		:hiBin = (float) hiBin histogram bin limit
+		:numBins = (int) number of histogram bins
+		:plotPrefix = (string) unique prefix title (optional)
+		
+		:weight     = weighting values from inversion file
+		:initial    = initial residuals from inversion file
+		:final      = final residuals from inversion file
+	'''
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Read in Data ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
 	global settings
+	directory = settings['path'] + directory
+
+	if not os.path.isdir(directory):
+		os.mkdir(directory)
 	
-	newDDArray = []
-	
-	for a in sorted(dataLog):
+	#~~~~~ initial, final, and weight ~~~~~#
+	initial=[];final=[];weight=[]
+	for aDD in residualsArray:
+		initial.append(aDD[0])
+		final.append(aDD[1])
+		weight.append(aDD[2])
 
-		for b in sorted(dataLog[a]):
-			
-			azCover = dataLog[a][b]['links']['azCover']['total']['cover1']
-			links = dataLog[a][b]['links']['totalLinks']['total']
-			if (azCover >= settings['minAZ']) and (links >= settings['minLinks']):
-			
-				for aSet in ['unused','accepted']:
-					for link in sorted(dataLog[a][b][aSet]):
-						aLink = dataLog[a][b][aSet][link]
-						
-						eventA = myEventArray.events[myEventArray.eventIndexStr(a)]
-						eventB = myEventArray.events[myEventArray.eventIndexStr(b)]
-
-						if shouldLink(eventA,eventB,aLink['normCC']):
-														
-							slowness = settings['slowness']
-	
-							predictedShift = slowness * (eventA.gcarc - eventB.gcarc) * \
-								settings['gc2km'] + \
-								(eventA.originTimeShift - eventB.originTimeShift)
-
-							theDD = None
-							theDD = DDObservation()
-
-							theDD.aEvent = deepcopy(eventA)
-							theDD.bEvent = deepcopy(eventB)
-							theDD.aEvent = reBuildEventInformation(theDD.aEvent,aLink,link)
-							theDD.bEvent = reBuildEventInformation(theDD.bEvent,aLink,link)
-
-							theDD.hSlowness = slowness
-							theDD.ccorAmplitude = aLink['normCC']
-							theDD.ccorUnnormalizedAmplitude = aLink['unnormCC']
-
-							theDD.dtObs = aLink['lag']
-# 							theDD.dtPredicted = predictedShift
-							theDD.computePredictedDifference()
+	initial = np.array(initial)
+	final   = np.array(final)
+	weight  = np.array(weight)
 		
-							theDD.computeDerivatives()
-							theDD.qualityValue = aLink['normCC']
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~ Bin and plot residual information ~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	#~~~~~ Weighting statistics ~~~~~#
+	nH = 0; nF = 0
+	for ii in weight:
+		if ii >= 0.5:
+			nH += 1
+			if ii == 1.0:
+				nF += 1
+	pH2F  = float(nH)/float(len(weight))*100
+	pFull = float(nF)/float(len(weight))*100
 
-							theDD.powerSignalA = aLink['powerA']
-							theDD.powerSignalB = aLink['powerB']
+	#~~~~~ Bin residual information ~~~~~#
+	bins=np.linspace(loBin,hiBin,num=numBins)
+	histInitial,bin_edges=np.histogram(initial,bins=bins)
+	histFinal,bin_edges=np.histogram(final,bins=bins)
+
+	initialAve = np.average(abs(initial))
+	finalAve   = np.average(abs(final))
+
+	initialMedian = np.median(abs(initial))
+	finalMedian   = np.median(abs(final))
 	
-							newDDArray.append(theDD)
-
-	return newDDArray
-def reBuildEventInformation(ddEvent,newEvent,staID):
-	ddEvent.stationID   = staID
-	ddEvent.network     = newEvent['network']
-	ddEvent.station     = newEvent['station']
-	ddEvent.staLocation = newEvent['location']
-	ddEvent.channel     = newEvent['channel']
-	ddEvent.staLat      = newEvent['staLoc']['lat']
-	ddEvent.staLon      = newEvent['staLoc']['lon']
-	ddEvent.staElev     = newEvent['staLoc']['elev']
-	ddEvent.staDepth    = newEvent['staLoc']['depth']
-
-	ddEvent.updateOrigin(ddEvent.evLat,ddEvent.evLon)
-		
+	#~~~~~ Save residual information ~~~~~#
+	if plotPrefix:
+		fname  = directory + 'relocation-' + plotPrefix + '-BinnedData.txt'	
+	else:
+		fname  = directory + 'relocation_BinnedData.txt'
+	print 'Saving residual information to:'
+	print '   ' + fname
+	
+	outFile = open(fname, "w")
+	print >>outFile,'Weighting: 0.5-1.0: %0.2f%%, 1.0: %0.2f%%' % (pH2F,pFull)
+	print >>outFile,'Residual: Average Initial: %0.2f, Final: %0.2f' % (initialAve,finalAve)
+	print >>outFile,'Residual: Median  Initial: %0.2f, Final: %0.2f' % (initialMedian,finalMedian)
+	print >>outFile,'lowBin upBin Observed Predicted'
+	ii = 0
+	for item in histInitial:
+		print >>outFile,'%0.2f %0.2f %d %d' % (bins[ii],bins[ii+1],item,histFinal[ii])
+		ii += 1;
+					
+	outFile.close()
+	
+	#~~~~~ Plot residual information ~~~~~#
+	xLabel = 'Double Difference Residuals (s)'
+	title  = 'Mean Absolute Misfit\nInitial: %0.2f s; Final: %0.2f s' % (initialAve,finalAve)
+	if plotPrefix:
+		fname  = directory + '/Histogram-' + plotPrefix + '-MeanAbsoluteMisfit'	
+	else:
+		fname  = directory + '/Histogram-MeanAbsoluteMisfit'
+	
+	legendList = ('Initial', 'Final')
+	plotHistogram([histInitial,histFinal],bin_edges,2,xLabel,title,fname,legendList)
+def relocationPlot(eventArray,directory='/Results/',plotPrefix=None):
 	'''
-	The event information from myEventArray may not be the same station information
-		so unrequired information will be removed.
+	Plot information from readRelocations
+		:eventArray  = (EventArray object) object including event information
+		:distArray  = (numpy array) neic2newDist values
+		:plotPrefix = (string) unique prefix title (optional)
 	'''
-	ddEvent.calibration = None
-	ddEvent.componentAzNorth = None
-	ddEvent.componentIncidentAngleVertical = None
-	ddEvent.quality    = None
-	ddEvent.idep       = None
-	ddEvent.npts       = None
-	ddEvent.sampleRate = None
-	ddEvent.nyquist    = None
-	ddEvent.delta      = None
-	ddEvent.startTime  = None
-	ddEvent.endTime    = None
-	ddEvent.refTime    = None
-	ddEvent.b          = None
-	ddEvent.e          = None
-	ddEvent.minAmp     = None
-	ddEvent.maxAmp     = None
-	ddEvent.meanAmp    = None
-	ddEvent.fileType   = None
-	ddEvent.processing = None
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Build Data Set ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	global settings
+	directory = settings['path'] + directory
 
-	return ddEvent
+	if not os.path.isdir(directory):
+		os.mkdir(directory)
 	
-## 3. Plot Correlation Values ##
-from matplotlib.widgets import RadioButtons
-from matplotlib.widgets import CheckButtons
-
-def findAzLag(event_A,event_B,log,set='accepted'):
-	azimuth = {}; lag = {}; cc = {}
-	evDist = None; evAz = None
-	
-	for a in log[event_A][event_B][set]:
-		tempAz  = log[event_A][event_B][set][a]['aEvent']['az']
-		tempLag = log[event_A][event_B][set][a]['lag']
-		tempCC = log[event_A][event_B][set][a]['normCC']
-
-		evDist = log[event_A][event_B][set][a]['abEvDist']
-		evAz = log[event_A][event_B][set][a]['abEvAz']
+	timeArray=[];distArray=[]
+	for event in eventArray.events:
+		(dist,az,baz) = gps2DistAzimuth(event.evLat,event.evLon, \
+							event.evLatInitial,event.evLonInitial)
+		dist /= 1000.0
 		
-		chan = log[event_A][event_B][set][a]['channel']
-		if chan not in azimuth:
-			azimuth[chan] = []
-			lag[chan] = []
-			cc[chan] = []
-		azimuth[chan].append(tempAz)
-		lag[chan].append(tempLag)
-		cc[chan].append(tempCC)
+		distArray.append(dist)
+		timeArray.append(event.originTimeShift)
 	
-	if set=='accepted':
-		links = {}
-		for aChan in log[event_A][event_B]['links']['totalLinks']:
-			links[aChan] = log[event_A][event_B]['links']['totalLinks'][aChan]
+	distArray = np.array(distArray)
+	timeArray = np.array(timeArray)
+
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~ Bin and plot time moved from NEIC ~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	#~~~~~ Bin information ~~~~~#
+	loBin	= np.floor(timeArray.min()) - 0.5
+	hiBin 	= np.ceil(timeArray.max()) + 0.5
+	numBins = np.abs(hiBin) + np.abs(loBin) + 1
+	
+	bins=np.linspace(loBin,hiBin,num=numBins)
+	histTime,bin_edges=np.histogram(timeArray,bins=bins)
+	histTimeAbs,bin_edges=np.histogram(np.abs(timeArray),bins=bins)
+
+	meanTime = np.mean(timeArray)
+	medianTime = np.median(timeArray)
+	stdTime = np.std(timeArray)
+
+	meanTimeAbs = np.mean(np.abs(timeArray))
+	medianTimeAbs = np.median(np.abs(timeArray))
+	stdTimeAbs = np.std(np.abs(timeArray))
+
+	#~~~~~ Plot information ~~~~~#
+	xLabel = 'Shift from NEIC Origin Time (s)'
+	title  = 'Mean: %0.2f s; Median: %0.2f s; StdDev: %0.2f s' % (meanTime,medianTime,stdTime)
+	titleAbs= 'Absolute: Mean: %0.2f s; Median: %0.2f s; StdDev: %0.2f s' % \
+					(meanTimeAbs,medianTimeAbs,stdTimeAbs)
+	fname  = directory + '/Histogram-ShiftFromNEICOriginTime'
+	if plotPrefix:
+		fname  = directory + '/Histogram-' + plotPrefix + '-ShiftFromNEICOriginTime'	
 	else:
-		links = []
+		fname  = directory + '/Histogram-ShiftFromNEICOriginTime'
 	
-	evLocs = []
-	if len(log[event_A][event_B]['accepted']) > 0:
-		tSet = 'accepted'
+	print 'Saving time shift histogram to:'
+	print '   ' + fname
+
+	plotHistogram(histTime,bin_edges,1,xLabel,title,fname,savePlt=False,subPlot=[2,1])
+	plotHistogram(histTimeAbs,bin_edges,1,xLabel,titleAbs,fname,subPlot=[2,2])
+
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~ Bin and plot distance moved from NEIC ~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	#~~~~~ Bin information ~~~~~#
+	loBin	= -2.5
+	hiBin 	= np.ceil(distArray.max()/5.0)*5
+	numBins = hiBin/5 + 2
+	
+	bins=np.linspace(loBin,hiBin+2.5,num=numBins)
+	histDist,bin_edges=np.histogram(distArray,bins=bins)
+
+	meanDist = np.mean(distArray)
+	medianDist = np.median(distArray)
+	stdDist = np.std(distArray)
+
+	#~~~~~ Plot information ~~~~~#
+	xLabel = 'Shift from NEIC Epicenter (km)'
+	title  = 'Mean: %0.2f km; Median: %0.2f km; StdDev: %0.2f' % (meanDist,medianDist,stdDist)
+	if plotPrefix:
+		fname  = directory + '/Histogram-' + plotPrefix + '-ShiftFromNEICEpicenter'	
 	else:
-		tSet = 'unused'
-	temp = log[event_A][event_B][tSet].keys()
-	evLocs.append(log[event_A][event_B][tSet][temp[0]]['aEvent']['lat'])
-	evLocs.append(log[event_A][event_B][tSet][temp[0]]['aEvent']['lon'])
-	evLocs.append(log[event_A][event_B][tSet][temp[0]]['bEvent']['lat'])
-	evLocs.append(log[event_A][event_B][tSet][temp[0]]['bEvent']['lon'])
-		
-	return azimuth,lag,cc,links,evLocs,evDist,evAz
-def updatePlot(aEvent,bEvent,log):
+		fname  = directory + '/Histogram-ShiftFromNEICEpicenter'	
 	
-	if bEvent in log[aEvent]:
-		azimuth_pick,lag_pick,links,locs = findAzLag(aEvent,bEvent,log,set='accepted')
-		azimuth_un,lag_un,dummy,dummy = findAzLag(aEvent,bEvent,log,set='unused')
-		
-		for aChan in l_pick:
-			if aChan in azimuth_pick:
-				
-				l_pick[aChan].set_xdata(azimuth_pick[aChan])
-				l_pick[aChan].set_ydata(lag_pick[aChan])
-			else:
-				l_pick[aChan].set_xdata([])
-				l_pick[aChan].set_ydata([])
+	print 'Saving distance shift histogram to:'
+	print '   ' + fname
 
-			if aChan in azimuth_un:
-				l_un[aChan].set_xdata(azimuth_un[aChan])
-				l_un[aChan].set_ydata(lag_un[aChan])
-			else:
-				l_un[aChan].set_xdata([])
-				l_un[aChan].set_ydata([])
-					
-		linkT = ''
-		for aChan in links:
-			linkT = linkT+aChan+': '+str(links[aChan])+' '
-		titleText = aEvent+' & '+bEvent + '\nLinks: '+linkT
-		aTitle.set_text(titleText)
-				
-	else:
-		for aChan in l_pick:
-			l_pick[aChan].set_xdata([])
-			l_pick[aChan].set_ydata([])
-
-			l_un[aChan].set_xdata([])
-			l_un[aChan].set_ydata([])
-
-		titleText = aEvent+' & '+bEvent + '\nNot Linked'
-		aTitle.set_text(titleText)
-	
-	fig.canvas.draw()		
-def aDataSet(event):
-	global aGlobal
-	aEvent = aGlobal = event
-	bEvent = bGlobal
-	
-	updatePlot(aEvent,bEvent,dataLog)
-def bDataSet(event):
-	global bGlobal
-	aEvent = aGlobal
-	bEvent = bGlobal = event
-
-	updatePlot(aEvent,bEvent,dataLog)
-
-def plotAllCorrValues(log):
-	
-	plotPath = settings['path'] + '/CorrPlots/'
-	makeDir(plotPath)
-	
-	azimuthArray = np.arange(0, 380, 30)
-		
-	events = sorted(log.keys())
-	for aEvent in events:
-		
-		print 'Plotting all {} pairs'.format(aEvent)
-		
-		plotEventPath = plotPath + aEvent + '/'
-		makeDir(plotEventPath)
-
-		for bEvent in events:
-			if aEvent != bEvent:
-
-				##~~~ ax1: Plot Traveltime Difference (s) vs Azimuth (deg) ~~~##
-				##~~~ ax2: Plot Traveltime Difference (s) vs Azimuth (deg) ~~~##
-				ax1 = plt.subplot2grid((5,1),(0,0),rowspan=4)
-				ax2 = plt.subplot2grid((5,1),(4,0))
-
-				if bEvent in log[aEvent]:
-					azimuth_pick,lag_pick,cc_pick,links,locs,evDist1,evAz1 = \
-										findAzLag(aEvent,bEvent,log,set='accepted')
-					azimuth_un,lag_un,cc_un,dummy,dummy,evDist2,evAz2 = \
-										findAzLag(aEvent,bEvent,log,set='unused')
-					
-					## Define distance and azimuth between two events ##
-					if evDist1:
-						evDist = evDist1
-						evAz   = evAz1
-					else:
-						evDist = evDist2
-						evAz   = evAz2
-						
-					## Plot measurements ##
-					obsAz_P = []; obsLag_P = []
-					obsAz_A = []; obsLag_A = []
-					symbols = ['o','v','*']
-					index = 0
-					for aChan in settings['channels']:
-						aChan = aChan.upper()
-						
-						if aChan in azimuth_pick:
-							pick_x = azimuth_pick[aChan]
-							pick_y = lag_pick[aChan]
-							pick_y2 = cc_pick[aChan]
-							
-							obsAz_P += pick_x
-							obsLag_P += pick_y
-
-							obsAz_A += pick_x
-							obsLag_A += pick_y
-			
-						else:
-							pick_x = []
-							pick_y = []
-							pick_y2 = []
-							
-						if aChan in azimuth_un:
-							unpick_x = azimuth_un[aChan]
-							unpick_y = lag_un[aChan]
-							unpick_y2 = cc_un[aChan]
-
-							obsAz_A += unpick_x
-							obsLag_A += unpick_y
-							
-						else:
-							unpick_x = []
-							unpick_y = []
-							unpick_y2 = []
-
-						ax1.plot(pick_x,pick_y,symbols[index],lw=2,color='red')
-						ax1.plot(unpick_x,unpick_y,symbols[index],lw=0.5,color='gray')
-
-						ax2.plot(pick_x,pick_y2,symbols[index],lw=2,color='red')
-						ax2.plot(unpick_x,unpick_y2,symbols[index],lw=0.5,color='gray')
-
-						index += 1
-
-					## Plot initial locations sine curve ##
-					azRange = np.arange(0, 380, 2)
-					initAmp   = settings['slowness'] * evDist
-					initPhase = settings['deg_to_rad'] * evAz
-					initXdata,initYdata = calcSineCurve(azRange,initAmp,initPhase,0)
-					ax1.plot(initXdata,initYdata,'gray')
-					
-					## Plot improved optimized locations sine curve for accepted observations ##
-					if len(obsAz_P) > 0:
-						(optX_P,optY_P,phaseEst_P,amplitudeEst_P,biasEst_P) = \
-								fitSine(obsAz_P,obsLag_P)						
-						ax1.plot(optX_P,optY_P,'k')
-						stats =  '%-17s Distance  Azimuth\n' % ('')
-						stats += '%-12s %5.1f km  %5.1f$^{\circ}$\n' % ('Initial',evDist,evAz)
-						stats += '%-8s %5.1f km  %5.1f$^{\circ}$\n' % \
-							('Optimal',amplitudeEst_P*settings['slowness'],phaseEst_P)
-						stats += 'OT Shift    %5.1f s\n' % (biasEst_P)
-# 						stats += 'RMS Misfit  %0.1f s' % (0)
-						stats += 'gr=Inititial, blk=Optimal'
-# 						stats += 'gr=Init,blk=OptPick,gr=OptAll'
-						
-						bbox_props = dict(boxstyle="round", fc="w", ec="0.5", alpha=0.75)
-						ax1.text(.02,.98,stats,fontsize=8,bbox=bbox_props, \
-									transform=ax1.transAxes,ha='left',va='top')
-
-					## Plot improved optimized locations sine curve for all observations ##
-# 					if len(obsAz_A) > 0:
-# 						(optX_A,optY_A,phaseEst_A,amplitudeEst_A,biasEst_A) = \
-# 							fitSine(obsAz_A,obsLag_A)						
-# 						ax1.plot(optX_A,optY_A,':g')
-						
-					## Write titles with number of links ##
-					if evDist <= settings['linkDist']:
-						linkT = ''
-						for aChan in links:
-							if aChan != 'total':
-								linkT = linkT+aChan+': '+str(links[aChan])+' '
-						linkT = linkT+'total'+': '+str(links['total'])+' '
-						titleText = aEvent+' & '+bEvent + '\nLinks: '+linkT
-					
-					else:
-						titleText = aEvent+' & '+bEvent + \
-								'\nNot Linked: Event distance %0.2f km.' % (evDist)
-
-				else:
-					ax1.plot([],[])
-					ax2.plot([],[])
-
-					titleText = aEvent+' & '+bEvent + '\nNot Linked: No common links.'
-					aTitle.set_text(titleText)
-
-				##~~~ ax1: Plot Traveltime Difference (s) vs Azimuth (deg) ~~~##
-				ax1.set_xlim([0,360])
-				ax1.xaxis.set_ticks(azimuthArray)
-				ax1.xaxis.set_ticklabels([])
-				
-				ax1.set_ylim([-50,50])
-				
-				ax1.grid(True)
-				
-				zeroLine = ax1.plot([0,360],[0,0],lw=1,color='black')
-
-				aTitle = ax1.text(.5,1.01,titleText,fontsize=15,transform=ax1.transAxes,ha='center')
-				
-				ax1.set_ylabel('Traveltime Difference (s)')
-
-				##~~~ ax2: Plot Traveltime Difference (s) vs Azimuth (deg) ~~~##				
-				ax2.set_xlim([0,360])
-				ax2.xaxis.set_ticks(azimuthArray)
-				
-				ax2.set_ylim([0.0,1.1])
-				ax2.yaxis.set_ticks(np.arange(0, 1.2, 0.5))
-				
-				ax2.grid(True)
-
-				ccThreshLine = ax2.plot([0,360],[settings['minCC'],settings['minCC']],lw=1,color='black')
-
-				ax2.set_ylabel('CCorrelation')
-				ax2.set_xlabel('Azimuth ($^{\circ}$)')
-
-				##~~~ Plot ~~~##
-				plt.savefig(plotEventPath+'observations_{}-{}.pdf'.format(aEvent,bEvent))
-				plt.clf()
-				plt.close()
-
-def fitSine(azList,yList):
-	
-	deg_to_rad = settings['deg_to_rad']
-	azList = np.array(azList) * deg_to_rad
-	
-	b = np.matrix(yList).T
-	rows = [ [np.sin(az), np.cos(az), 1] for az in azList]
-	A = np.matrix(rows)
-	
-	(w,residuals,rank,sing_vals) = np.linalg.lstsq(A,b)
-	
-	phase = np.arctan2(w[1,0],w[0,0])*180.0/np.pi
-	amplitude = np.linalg.norm([w[0,0],w[1,0]],2)
-	shift = w[2,0]
-
-	azRange = np.arange(0, 380, 2)
-	optXdata,optYdata = calcSineCurve(azRange,amplitude,phase,shift)
-	
-	return optXdata,optYdata,phase,amplitude,shift
-def calcSineCurve(azRange,amplitude,phase,shift):
-	deg_to_rad = settings['deg_to_rad']
-	
-	xdata = azRange
-	ydata = amplitude * np.sin(deg_to_rad *(azRange - phase)) + shift
-
-	return xdata,ydata
+	plotHistogram(histDist,bin_edges,1,xLabel,title,fname)
 	
 ## io ##
 def save2HDF5(dataStruct):
@@ -2209,7 +2363,533 @@ def calcAzCover(array):
 			azCover2 = azCover1
 	
 	return azCover1,azCover2
+def plotHistogram(count,bins,nSets,xlabel='Range',title='Histogram',fname='Histogram',
+		legendList=None,savePlt=True,subPlot=None):
+	''' Plots a histogram. Binning needs to be done prior to sending to this function. 
+		See 'readRelocations' function for examples on binning. 
+		
+		plotHistogram(histDistance,bin_edges,1,xLabel,title,fname)
+		plotHistogram([histInitial,histFinal],bin_edges,2,xLabel,title,fname,legendList)
 
+		Adapted from http://matplotlib.org/
+	'''
+	import matplotlib.pyplot as plt
+	import matplotlib.patches as patches
+	import matplotlib.path as path
+
+	from matplotlib import rcParams
+	rcParams['font.family'] = 'serif'
+	rcParams['font.sans-serif'] = ['Helvetica']  
+	rcParams['axes.titlesize'] = 14
+	rcParams['axes.labelsize'] = 18
+	rcParams['xtick.labelsize'] = 14
+	rcParams['ytick.labelsize'] = 14
+	
+	#====================================================================
+	# Plot the histogram
+	#====================================================================
+	if not subPlot:
+		fig = plt.figure()
+		ax = fig.add_subplot(111)
+	else:
+		if subPlot[1] == 1:
+			fig = plt.figure()
+			ax = fig.add_subplot(subPlot[0]*100+10+subPlot[1])
+		else:
+			ax = plt.subplot(subPlot[0]*100+10+subPlot[1])
+	
+	# get the corners of the rectangles for the histogram
+	left = np.array(bins[:-1])
+	right = np.array(bins[1:])
+	bottom = np.zeros(len(left))
+	
+	topMax = 0
+	patchList = []
+	for ii in range(0,nSets):
+		if nSets == 1:
+			n = count
+		elif (nSets > 1) and (nSets==len(count)):
+			n = count[ii]
+		else:
+			print "Defined number of datasets is different than the number of datasets provided."
+			break
+	
+		top = bottom + n		
+		if top.max() > topMax:
+			topMax = top.max()	
+		# we need a (numrects x numsides x 2) numpy array for the path helper
+		# function to build a compound path
+		XY = np.array([[left,left,right,right], [bottom,top,top,bottom]]).T
+		
+		# get the Path object
+		barpath = path.Path.make_compound_path_from_polys(XY)
+		
+		# make a patch out of it
+		if nSets == 1:
+			patch = patches.PathPatch(barpath, facecolor='0.8', edgecolor='black', alpha=0.8)
+		else:
+			fcolor = str(0.5 + ii * (0.5/nSets))
+			patch = patches.PathPatch(barpath, facecolor=fcolor, edgecolor='black', alpha=0.8)
+		patchList.append(patch)
+		ax.add_patch(patch)
+	
+	# update the view limits
+	ax.set_xlim(left[0], right[-1])
+	ax.set_ylim(bottom.min(), topMax*1.1)
+	
+	ax.set_xlabel(xlabel)
+	if subPlot:
+		if subPlot[1] == 1:
+			ax.set_xlabel('')
+	
+	ax.set_ylabel('Count')
+	ax.set_title(title)
+# 	ax.grid(True)
+	
+	ax.minorticks_on()
+	ax.tick_params(which='both', width=1)
+	ax.tick_params(which='major', length=7)
+	ax.tick_params(which='minor', length=4)
+
+	if not legendList:
+		print 'Plotting Histogram'
+# 		ax.legend( patchList, range(0,nSets) )
+	elif len(legendList) == nSets:
+		ax.legend( patchList, legendList )
+	elif (len(legendList) != nSets) and (nSets > 1):
+		print "legendList length is different than the number of datasets specified."
+		ax.legend( patchList, range(0,nSets) )
+		
+	if savePlt:
+		plt.savefig((fname+'.pdf'))
+		plt.clf()
+		plt.close()
+		
+# 		os.system( 'open ./Relocation/Histogram-MeanAbsoluteMisfit.pdf' )
+		os.system( 'open ' + fname + '.pdf' )
+def plotRelocationsMap(eventArray,sLoc=None,sLocOffset=0.5,paper='archD',
+		wContour=200,lContour=500,plotName='Plot-Relocation',openFile='y',eScale='mag'):
+	'''Create a map of catalog data defined by search parameters. 
+		- 'eventArray': (EventArray object)
+		- 'sLoc': the bounds of the plot [north,south,west,east]
+		- 'sLocOffset': if sLoc is not defined, this describes the amount of offset from
+							the min/max lat/lon for the borders (in degrees)
+		- 'paper' is archD by default but could also be 11x17, 17x11
+		- 'wContour', 'lContour': water and land contour intervals, repectively
+		- 'plotName': name the plot will be saved as in the ./Figures folder
+		- 'openFile': open the file automatically ('y' or 'n')
+		- 'eScale': determines how the events are scaled. 'mag' scales them by magnitude
+			following Utsu & Seki. A number defines the circle diameter in kilometers.
+			Two numbers can be sent, [a,b], and a will be assigned to NEIC and b will be
+			applied to the alternate location. If only one number is sent, it still needs
+			to be an array, [a].
+	'''
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Make Directory ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	global settings
+	directory = settings['path'] + '/Results/'
+	if not os.path.isdir(directory):
+		os.mkdir(directory)
+
+	directory += 'Maps/'
+	if not os.path.isdir(directory):
+		os.mkdir(directory)
+		
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Prepare Data Files ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	## Print Event Info & Build File to Plot Lines Between NEIC and New Locations ##
+	eqFileName = directory + 'eventInfo.txt'
+	eqFile = open(eqFileName,"w")
+
+	locationLines = directory + 'locatioLines.txt'
+	sFile = open(locationLines,"w")
+
+	topLat=-999;bottomLat=999;leftLong=999;rightLong=-999
+	for aEvent in eventArray.events:
+		origin  = aEvent.originStr
+		neicLat = aEvent.evLatInitial
+		neicLon = aEvent.evLonInitial
+		newLat  = float(aEvent.evLat)
+		newLon  = float(aEvent.evLon)
+		depth   = aEvent.evDepth
+		mw      = aEvent.mag
+		dt      = aEvent.originTimeShift
+		
+		print >>eqFile, '%s %0.3f %0.3f %0.3f %0.3f %0.2f %0.2f %0.3f' % \
+			(origin,neicLon,neicLat,newLon,newLat,depth,mw,dt)
+
+		print >>sFile,"%s %s" % (newLon,newLat)
+		print >>sFile,"%s %s" % (neicLon,neicLat)
+		print >>sFile,">"
+		
+		maxLat = np.ceil( max([neicLat,newLat])*2 )/2.0  + 0.5
+		minLat = np.floor( min([neicLat,newLat])*2 )/2.0 - 0.5
+
+		if maxLat > topLat: topLat = maxLat
+		if minLat < bottomLat: bottomLat = minLat
+
+		maxLon = np.ceil( max([neicLon,newLon])*2 )/2.0  + 0.5
+		minLon = np.floor( min([neicLon,newLon])*2 )/2.0 - 0.5
+
+		if maxLon > rightLong: rightLong = maxLon
+		if minLon < leftLong: leftLong = minLon
+		
+	if (rightLong-leftLong) > 180:
+		temp = rightLong
+		rightLong = leftLong
+		leftLong = temp
+				
+	eqFile.close()
+	sFile.close()
+	
+	## Define Plot Boundaries ##
+	if sLoc:
+		[topLat,bottomLat,leftLong,rightLong] = sLoc
+
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~ Prepare Parameters for Script ~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	print "\nPreparing regional plot of catalog..."
+
+	rmFile = 'rm ' + directory + plotName + '.ps'
+	os.system(rmFile)
+	
+	## Paper Width (inches)
+	if paper == '11x17':	
+		pWidth = 9
+		shift = '-X1.3i -Y1i'
+	elif paper == '17x11':
+		pWidth = 14.5
+		shift = '-X1.3i -Y1i'
+	else:
+		pWidth = 20.5
+		shift = '-X2i -Y1.5i'
+	
+	## Calculate tick spacing
+	dLon = rightLong-leftLong
+	lonT = dLon/10.0
+	if lonT > 1.0:
+		lonT = round(lonT/2.0)*2.0
+		lonT2 = lonT
+	else:
+		if lonT < 0.2:
+			lonT = 1.0
+			lonT2 = lonT/4
+		else:
+			lonT = 1.0
+			lonT2 = lonT/2
+	
+	dLat = topLat-bottomLat
+	latT = dLat/15.0
+	if latT > 1.0:
+		latT = round(latT/2.0)*2.0
+		latT2= latT/2
+	else:
+		if latT < 0.2:
+			latT = 1.0
+			latT2= latT/4
+		else:
+			latT = 1.0
+			latT2= latT/2
+
+	## Calculate EQ scaling
+	latM = dLat/2.0 + bottomLat
+	(dist,az,baz) = gps2DistAzimuth(latM,leftLong,latM,rightLong)
+	dist /= 1000.0
+	scaling = pWidth/dist
+	
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Write Script ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	fopen = directory + '/EventDepthMap-Relocation.csh'	
+	mapScript = open(fopen, "w")
+	
+	## Mapping parameters
+	s = "#!/bin/csh\nset PSFILE = '%s/%s.ps'\n" % (directory,plotName)
+	if paper == '17x11':
+		s = s + "set PROJ = '-JM%0.1fi -V'\n" % (pWidth)
+	else:
+		s = s + "set PROJ = '-JM%0.1fi -P -V'\n" % (pWidth)
+	s = s + "set LIMITS = '-R%s/%s/%s/%s'\n" % (leftLong,rightLong,bottomLat,topLat)
+	s = s + "set SCALE = '%0.6f'\n" % scaling
+	s = s + "set TICKS = '-Ba%dg%0.2f/a%dg%0.2fWeSn'\n" % (lonT,lonT2,latT,latT2)
+	s = s + "set NEIC  = '%s'\n" % eqFileName
+	
+	## GMTSET parameters
+	if paper in ['11x17','17x11']:
+		s = s + "gmtset PAPER_MEDIA %s\n" % ('11x17')
+	else:
+		s = s + "gmtset PAPER_MEDIA archD\n"
+	s = s + "gmtset PLOT_DEGREE_FORMAT ddd:mm:ss\n"
+	s = s + "gmtset OUTPUT_DEGREE_FORMAT D\n"
+	s = s + "gmtset DEGREE_SYMBOL degree\n"
+	s = s + "gmtset ANNOT_FONT_PRIMARY 0\n"
+	if paper in ['11x17','17x11']:
+		s = s + "gmtset ANNOT_FONT_SIZE 30\n"
+	else:
+		s = s + "gmtset ANNOT_FONT_SIZE 60\n"
+	s = s + "gmtset ANNOT_OFFSET_PRIMARY 0.35c\n"
+	s = s + "gmtset CHAR_ENCODING ISO-8859-1\n"
+	s = s + "gmtset DOTS_PR_INCH 600\n"
+	s = s + "gmtset BASEMAP_TYPE plain\n"
+	s = s + "gmtset BASEMAP_TYPE fancy\n"
+	s = s + "gmtset HEADER_FONT_SIZE 70\n"
+
+	## Plot base map and contours
+	s = s + "cat > eq.cpt << END\n0	255/0/0	25	255/0/0\n25	255/125/0	50	255/125/0\n"
+	s = s + "50	255/255/0	100	255/255/0\n100	green	250	green\n250	blue	100000	blue\nEND\n"
+	s = s + "grdraster 7 $LIMITS -Gtbi.grd -I30c -V\n"
+# 	s = s + "grdcontour tbi.grd $PROJ $LIMITS -DContours.xyz -M -A+s6 -C%d " % (wContour)
+	s = s + "grdcontour tbi.grd $PROJ $LIMITS -DContours.xyz -C%d " % (wContour)
+	s = s + "-L-27000/0 -W45/147/190 %s -K >! $PSFILE   #Water\n" % (shift)
+# 	s = s + "grdcontour tbi.grd $PROJ $LIMITS -DContours.xyz -M -A+s6 -C%d " % (lContour)
+	s = s + "grdcontour tbi.grd $PROJ $LIMITS -DContours.xyz -C%d " % (lContour)
+	s = s + "-L0/4000 -W149/128/118 -O -K >> $PSFILE   #Land\n"
+	s = s + "pscoast $PROJ $LIMITS $TICKS -Dfull -W0.5p -Na -O -K >> $PSFILE\n"
+	
+	## Plot Locations
+	s = s + "sort -r -k7 $NEIC > neic.xy\n"
+	
+		## Plot NEIC Locations
+	if eScale in ['mag','Mag','MAG','magnitude','Magnitude','MAGNITUDE']:
+		s = s + "awk '{print $2, $3, '$SCALE'*2*10^(($7-4.5)/2)}' neic.xy >! usgs.xy\n"
+	elif len(eScale) == 2:
+		s = s + "awk '{print $2, $3, '$SCALE'*%0.2f}' neic.xy >! usgs.xy\n" % (eScale[0])
+	else:
+		s = s + "awk '{print $2, $3, '$SCALE'*%0.2f}' neic.xy >! usgs.xy\n" % (eScale)
+	
+	s = s + "psxy  usgs.xy $PROJ $LIMITS -Sci -Ggray -W1p -O -K  >> $PSFILE\n"
+
+		## Plot New Locations
+	if eScale in ['mag','Mag','MAG','magnitude','Magnitude','MAGNITUDE']:
+		s = s + "awk '{print $4, $5, '$SCALE'*2*10^(($7-4.5)/2)}' neic.xy >! usgs2.xy\n"
+	elif len(eScale) == 2:
+		s = s + "awk '{print $4, $5, '$SCALE'*%0.2f}' alt.xy >! usgs2.xy\n" % (eScale[1])
+	else:
+		s = s + "awk '{print $4, $5, '$SCALE'*%0.2f}' alt.xy >! usgs2.xy\n" % (eScale)
+	
+	s = s + "psxy  usgs2.xy $PROJ $LIMITS -Sci -Gred -W1p -O -K  >> $PSFILE\n"
+
+	## Plot GCMT Focal Mechanisms
+# 	if (printCat=='GCMT') or (printCat=='both'):
+# # 		if eScale in ['mag','Mag','MAG','magnitude','Magnitude','MAGNITUDE']:
+# # 			s = s + "awk '{print $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13}' $GCMT >! GCMT\n"
+# # 		elif len(eScale) == 2:
+# # 			s = s + "awk '{print $1, $2, $3, $4, $5, $6, $7, $8, $9, %0.2f, $11, $12, $13}' $GCMT >! GCMT\n" % (eScale[0])
+# # 		else:
+# # 			s = s + "awk '{print $1, $2, $3, $4, $5, $6, $7, $8, $9, %0.2f, $11, $12, $13}' $GCMT >! GCMT\n" % (eScale)
+# # 		s = s + "kmc_psmeca $GCMT $PROJ $LIMITS -D0/10000 -T0 -Ggray -L -W0.5p -Sm$SCALE'i'/-1.0 -O -K >> $PSFILE\n"
+# 
+# 		s = s + "psmeca $GCMT $PROJ $LIMITS -D0/10000 -T0 -Ggray -L -W0.5p -Sm0.25i/-1.0 -O -K >> $PSFILE\n"
+# 		
+# # 		s = s + "awk '{print $1, $2, $3, $4, $5, $6, $7, $8, $9, $10*$10*$10*$10/10000, $11, $12, $13}' $GCMT >! GCMT\n"
+# # 		s = s + "psmeca $GCMT $PROJ $LIMITS -D250/10000 -T0 -G25/25/112 -L -W0.5p -Sm0.25i/-1.0 -O -K >> $PSFILE\n"
+# # 		s = s + "psmeca $GCMT $PROJ $LIMITS -D100/250 -T0 -G60/179/113 -L -W0.5p -Sm0.25i/-1.0 -O -K >> $PSFILE\n"
+# # 		s = s + "psmeca $GCMT $PROJ $LIMITS -D50/100 -T0 -G255/255/0 -L -W0.5p -Sm0.25i/-1.0 -O -K >> $PSFILE\n"
+# # 		s = s + "psmeca $GCMT $PROJ $LIMITS -D25/50 -T0 -G255/125/0 -L -W0.5p -Sm0.25i/-1.0 -O -K >> $PSFILE\n"
+# # 		s = s + "psmeca $GCMT $PROJ $LIMITS -D0/25 -T0 -G255/0/0 -L -W0.5p -Sm0.25i/-1.0 -O -K >> $PSFILE\n"
+	
+	## Plot Lines Between NEIC and Relocation
+	s = s + "psxy %s $PROJ $LIMITS -W1.5p,0/0/0 -M -A -O -K >> $PSFILE\n" % (locationLines)
+
+	## Finish Up
+# 	s = s + "ps2pdf -dColorConversionStrategy=/sRGB -dProcessColorModel=/DeviceRGB $PSFILE %s/%s.pdf\n" % (directory,plotName)
+	s = s + "ps2pdf -dColorConversionStrategy=/sRGB -dProcessColorModel=/DeviceRGB -dPDFSETTINGS=/prepress -dEPSCrop $PSFILE %s%s.pdf\n" % (directory,plotName)
+	if openFile.lower()[0] == 'y':
+		s = s + "open $PSFILE\n"
+	s = s + "rm *.grd\nrm *.xy\n"
+	s = s + "rm Contours.*1*.xyz\nrm Contours.*2*.xyz\nrm Contours.*3*.xyz\n"
+	s = s + "rm Contours.*4*.xyz\nrm *.xyz eq.cpt\n"
+	s = s + "exit\n#\n"	
+	
+	print >>mapScript,'%s' % s
+	mapScript.close()
+	
+	print "\nPlotting events..."
+	
+	runFile = 'csh ' + fopen
+	os.system( runFile )
+	
+	print "\nPlot complete."
+def printKMLRelocationFile(eventArray,relocCat='Relocation',scaleByMag=True,
+		scaleObject=5.5,color='red',info=True):
+	''' Print a initial, new, and difference line KML files.
+			- 'eventArray'  : (EventArray object)
+			- 'relocCat'    : prefix to KML file names
+			- 'scaleByMag'  : scale placer by event magnitude (default True)
+			- 'scaleObject' : scale of placer (default: 5.5 useful for scaleByMag)
+			- 'color'       : ('r','red'):   red circle the same shape as as 'n','no'
+ 							 ('n','no'):    gray cirlce the same shape as 'y','yes'
+							 ('g','green'): green placer
+							 ('b','blue'):  blue placer
+							 ('p','purple'):purple placer
+							 ('y','yellow'):yellow placer
+							 ('w','white'): white placer
+			- 'info'        : print info associated with each event'''
+
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Make Directory ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	global settings
+	directory = settings['path'] + '/Results/'
+	if not os.path.isdir(directory):
+		os.mkdir(directory)
+
+	directory += 'KML/'
+	if not os.path.isdir(directory):
+		os.mkdir(directory)
+	
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Make Original KML ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	originalName = relocCat + '_original.kml'
+	printKMLFile(eventArray,directory,locationType='Initial',filename=originalName,scaleByMag=False,
+			scaleObject=1,color='n',info=False)
+
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Make New KML ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	newName = relocCat + '_new.kml'	
+	printKMLFile(eventArray,directory,locationType='New',filename=newName,scaleByMag=scaleByMag,
+			scaleObject=scaleObject,color=color,info=info)
+	
+
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Make Line KML ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	lineFile = directory + relocCat + '_lines.kml'
+	kmlFile = open(lineFile,"w")
+	
+	print >>kmlFile, '<?xml version="1.0" encoding="UTF-8"?>'
+	print >>kmlFile, '<kml xmlns="http://earth.google.com/kml/2.0"> <Document>'
+	
+	for aEvent in eventArray.events:
+		olat  = aEvent.evLatInitial
+		olon  = aEvent.evLonInitial
+
+		nlat  = float(aEvent.evLat)
+		nlon  = float(aEvent.evLon)
+
+		print >>kmlFile, '<Placemark>\n\t<LineString>'
+		print >>kmlFile, '\t\t<extrude>1</extrude>\n\t\t<tessellate>1</tessellate>'
+		print >>kmlFile, '\t\t<coordinates>'
+		print >>kmlFile, '\t\t\t%s,%s,0 %s,%s,0' % (olon,olat,nlon,nlat)
+		print >>kmlFile, '\t\t</coordinates>\n\t</LineString>'
+	
+# 		print >>kmlFile, '\t<Style>\n\t\t<LineStyle>\n\t\t\t<color>#000000</color>'
+# 		print >>kmlFile, '\t\t\t<width>5</width>\n\t\t</LineStyle>\n\t</Style>'
+	
+		print >>kmlFile, '</Placemark>'
+		
+	print >>kmlFile, '</Document> </kml>'
+	
+	kmlFile.close()
+def printKMLFile(eventArray,directory,locationType='Initial',filename='Location.kml',scaleByMag=True,
+		scaleObject=5.5,color='red',info=True):
+	''' Print a KML file of locations and information for a specified catalog
+			- 'eventArray'  : (EventArray object)
+			- 'directory'   : directory where KML file is saved
+			- 'locationType': either 'Initial' or 'New'
+			- 'filename'    : name of saved KML file
+			- 'scaleByMag'  : scale placer by event magnitude (default True)
+			- 'scaleObject' : scale of placer (default: 5.5 useful for scaleByMag)
+			- 'color'       : ('r','red'):   red circle the same shape as as 'n','no'
+ 							 ('n','no'):    gray cirlce the same shape as 'y','yes'
+							 ('g','green'): green placer
+							 ('b','blue'):  blue placer
+							 ('p','purple'):purple placer
+							 ('y','yellow'):yellow placer
+							 ('w','white'): white placer
+			- 'info'        : print info associated with each event'''
+		
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Make File ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
+	filename = directory + filename
+
+	kmlFile = open(filename,"w")
+	
+	print >>kmlFile, '<?xml version="1.0" encoding="UTF-8"?>'
+	print >>kmlFile, '<kml xmlns="http://www.opengis.net/kml/2.2">'
+	print >>kmlFile, '<Document>'
+
+	endStr   = '\t\t</Point>\n</Placemark>'
+	
+	scaleNorm    = 2*pow(10,((scaleObject-4.5)/2))
+
+	for aEvent in eventArray.events:
+
+		## Location Type (Initial, New) ##
+		eInfo = '%s Location.\n' % locationType
+			
+		## Date ##
+		eInfoShort = aEvent.origin.strftime("%Y-%m-%d")
+		eInfo += 'NEIC: %s' %  aEvent.origin.strftime("%Y-%m-%d %H:%m:%S")
+			
+		## Magnitude ##
+		scaleMag = aEvent.mag
+		eInfo += '\nMagnitude: M %0.2f' % (aEvent.mag)
+			
+		scaleMag = 2*pow(10,((scaleMag-4.5)/2))
+		scaleMag = scaleMag / scaleNorm
+
+		## Location ##
+		elat  = aEvent.evLatInitial
+		elon  = aEvent.evLonInitial
+		eInfo += '\n\nInitial Location: %0.3fN, %0.3fE\nDepth: %0.2fkm' % \
+					(elat,elon,aEvent.evDepthInitial)
+		
+		if locationType.lower() == 'new':
+			elat  = float(aEvent.evLat)
+			elon  = float(aEvent.evLon)
+
+			eInfo += '\n\nNew Location: %0.3fN, %0.3fE\nDepth: %0.2fkm' % \
+					(elat,elon,aEvent.evDepth)
+			eInfo += '\nOrigin Time Shift: %0.2fs' % aEvent.originTimeShift
+			
+		eLocation = '\t\t\t<coordinates>%s,%s,0</coordinates>' % (elon,elat)
+		
+		## Placemarker ##
+		print >>kmlFile, '<Placemark>'
+		if info:
+			print >>kmlFile, '\t<name>%s</name>' % eInfoShort
+		print >>kmlFile, '\t<description>%s</description>' % eInfo
+	
+		## Marker symbol ##
+		print >>kmlFile, '\t<Style>\n\t\t<IconStyle>'
+		if scaleByMag:
+			print >>kmlFile, '\t\t\t<scale>%0.4f</scale>\n\t\t\t<Icon>' % scaleMag
+		else:
+			print >>kmlFile, '\t\t\t<scale>%0.4f</scale>\n\t\t\t<Icon>' % scaleObject
+				
+		## Color ##
+		if color.lower() in ['r','red']:
+			print >>kmlFile, '\t\t\t\t<href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle_highlight.png</href>'
+		elif color.lower() in ['g','green']:
+			print >>kmlFile, '\t\t\t\t<href>https://maps.google.com/mapfiles/kml/paddle/grn-circle-lv.png</href>'
+		elif color.lower() in ['b','blue']:
+			print >>kmlFile, '\t\t\t\t<href>https://maps.google.com/mapfiles/kml/paddle/blu-circle-lv.png</href>'
+		elif color.lower() in ['p','purple']:
+			print >>kmlFile, '\t\t\t\t<href>https://maps.google.com/mapfiles/kml/paddle/purple-circle-lv.png</href>'
+		elif color.lower() in ['y','yellow']:
+			print >>kmlFile, '\t\t\t\t<href>https://maps.google.com/mapfiles/kml/paddle/ylw-circle-lv.png</href>'
+		elif color.lower() in ['w','white']:
+			print >>kmlFile, '\t\t\t\t<href>https://maps.google.com/mapfiles/kml/paddle/wht-circle-lv.png</href>'
+		else:
+			print >>kmlFile, '\t\t\t\t<href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href>'
+		print >>kmlFile, '\t\t\t</Icon>\n\t\t</IconStyle>\n\t</Style>'
+	
+		print >>kmlFile, '\t\t<Point>'
+		print >>kmlFile, eLocation
+	
+		print >>kmlFile, endStr
+	
+	print >>kmlFile, '</Document>\n</kml>'
+	
+	kmlFile.close()
+	
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
 dataStruct = Waveforms()
@@ -2279,15 +2959,15 @@ dataStruct.settings['deg_to_rad'] = np.arccos(-1.0) / 180.0
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
 ##~~~ Work Flow (which steps to include) ~~~##
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
-# workFlow = [1,2,3]
-workFlow = [4,5,6]
-# workFlow = [1,2,3,4,6]
-# workFlow = [1,2,3,4,5,6]
+workFlow = [1,2,3,6,7]
+# workFlow = [1,2,3,5,6,7]
+# workFlow = [4,5,6,7]
+# workFlow = [4,6,7]
 
 global settings
 settings = dataStruct.settings
 
-pdb.set_trace()
+# pdb.set_trace()
 
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
@@ -2337,10 +3017,12 @@ if 6 in workFlow:
 # 		fig2.savefig('InversionResults_B-Iter_{}.pdf'.format(i), bbox_inches='tight')
 		plt.clf()
 		plt.close()
-		plt.show()
+# 		plt.show()
+	
+	pickle.dump( myEventArray, open( dataStruct.settings['path']+'/resultsEventArray.pickle', 'wb' ) )
 
-##~~~ 7. ~~~##
-if 7 in workFlow:
+##~~~ 6.5. Test Set ~~~##
+if 6.5 in workFlow:
 	print '\nPerforming test iteration(s)\n'
 
 	dataStruct.settings['minCC'] = 0.85
@@ -2352,5 +3034,12 @@ if 7 in workFlow:
 		doIteration(myEventArray,tempDDArray)
 		plt.clf()
 		plt.close()
-		
+
+##~~~ 7. Plot Results ~~~#
+if 7 in workFlow:
+	print '\nPlotting results to PDF and KML\n'
+
+	plotRelocationsMap(myEventArray)
+	printKMLRelocationFile(myEventArray)
+			
 # pdb.set_trace()
