@@ -17,6 +17,7 @@ in the "workFlow" array. The basic steps are:
 4. Read in dataLog, ddArray, and myEventArray
 5. Plot Correlation Values
 6. Perform the iteration
+7. Plot Results
 
 There is also a step 7, but this was just used in the testing phase.
 
@@ -132,6 +133,7 @@ dictionary is made global so that all the functions can see it.
 
 ##IV. Workflow
 1. QC, Prepare, and Save *ALL* Data to HDF5 file 
+
 	This function reads in all of the waveforms, checks to see if they meet basic quality
 	standards (e.g. desired channel(s), quality), processes the waveforms (e.g. filter, 
 	taper, cut), then saves all of the processed data to HDF5 files and appends all of the
@@ -139,6 +141,7 @@ dictionary is made global so that all the functions can see it.
 	all of the data and settings.
 	
 2. Find *All* Viable Links, Compute CC, Write *ALL* to Text, Create Digital
+
 	This step finds all viable links (based only on matching stations) and computes the
 	cross-correlation. This produces three structures:
 	
@@ -158,6 +161,7 @@ dictionary is made global so that all the functions can see it.
 		events are updated in the inversion processes.
 	
 3. Save (digital) log to Pickle format
+
 	Dumps dataLog, ddArray, and myEventArray to a Pickle files. This way, unless you are 
 	wanting to re-process your data, you just run steps 1-3 once, then you can simply read 
 	in the Pickle files to perform the inversion. If additional data is added, this could
@@ -165,16 +169,20 @@ dictionary is made global so that all the functions can see it.
 	measurements you have made. I have not worked out the exact procedure for this situation.
 	
 4. Read in dataLog, ddArray, and myEventArray
+
 	Simply reads in the dataLog, ddArray, and myEventArray Pickle files.
 	
 5. Plot Correlation Values
+
 	Plots all correlation coefficient vs azimuth plots.
 	
 6. Perform the iteration
+
 	Performs the inversion. Histogram plots of mean absolute misfit and shifts from
 	NEIC epicenter and origin time are produced.
 
 7. Plot Results
+
 	A GMT script is written and run (note: this is currently written for 
 	versions of GMT earlier than GMT5, however, the code can easily be edited for GMT5)
 	producing a PDF map of the original (gray) and new (red) locations, with a line for
