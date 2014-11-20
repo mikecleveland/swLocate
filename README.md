@@ -132,8 +132,7 @@ dictionary is made global so that all the functions can see it.
 
 
 ##IV. Workflow
-1. QC, Prepare, and Save *ALL* Data to HDF5 file 
-
+1. QC, Prepare, and Save *ALL* Data to HDF5 file<br>
 	This function reads in all of the waveforms, checks to see if they meet basic quality
 	standards (e.g. desired channel(s), quality), processes the waveforms (e.g. filter, 
 	taper, cut), then saves all of the processed data to HDF5 files and appends all of the
