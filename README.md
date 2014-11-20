@@ -144,7 +144,7 @@ dictionary is made global so that all the functions can see it.
 	cross-correlation. This produces three structures:
 	
 	a. dataLog (dictionary): All of the observations are then stored to the dataLog dictionary. 
-	    The observations are divided between 'accepted' and 'unused' based linking distance
+	     The observations are divided between 'accepted' and 'unused' based linking distance
 		and minimum correlation coefficient (function: shouldLink). But, all observations 
 		are stored, so at a later time the settings can be changed and the use 'accepted' 
 		data updated without needing to re-process the data.
