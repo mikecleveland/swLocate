@@ -139,13 +139,12 @@ dictionary is made global so that all the functions can see it.
 	the data to dataStruct. dataStruct will later be saved as a Pickle file. This includes
 	all of the data and settings.
 	
-2. Find *All* Viable Links, Compute CC, Write *ALL* to Text, Create Digital
-
+2. Find *All* Viable Links, Compute CC, Write *ALL* to Text, Create Digital<br>
 	This step finds all viable links (based only on matching stations) and computes the
 	cross-correlation. This produces three structures:
 	
 	a. dataLog (dictionary): All of the observations are then stored to the dataLog dictionary. 
-		The	observations are divided between 'accepted' and 'unused' based linking distance
+	  The observations are divided between 'accepted' and 'unused' based linking distance
 		and minimum correlation coefficient (function: shouldLink). But, all observations 
 		are stored, so at a later time the settings can be changed and the use 'accepted' 
 		data updated without needing to re-process the data.
@@ -159,29 +158,24 @@ dictionary is made global so that all the functions can see it.
 		storing information about all of the events being investigated. Locations of these
 		events are updated in the inversion processes.
 	
-3. Save (digital) log to Pickle format
-
+3. Save (digital) log to Pickle format<br>
 	Dumps dataLog, ddArray, and myEventArray to a Pickle files. This way, unless you are 
 	wanting to re-process your data, you just run steps 1-3 once, then you can simply read 
 	in the Pickle files to perform the inversion. If additional data is added, this could
 	also be a way of only processing the new data, then simply appending it on the existing
 	measurements you have made. I have not worked out the exact procedure for this situation.
 	
-4. Read in dataLog, ddArray, and myEventArray
-
+4. Read in dataLog, ddArray, and myEventArray<br>
 	Simply reads in the dataLog, ddArray, and myEventArray Pickle files.
 	
-5. Plot Correlation Values
-
+5. Plot Correlation Values<br>
 	Plots all correlation coefficient vs azimuth plots.
 	
-6. Perform the iteration
-
+6. Perform the iteration<br>
 	Performs the inversion. Histogram plots of mean absolute misfit and shifts from
 	NEIC epicenter and origin time are produced.
 
-7. Plot Results
-
+7. Plot Results<br>
 	A GMT script is written and run (note: this is currently written for 
 	versions of GMT earlier than GMT5, however, the code can easily be edited for GMT5)
 	producing a PDF map of the original (gray) and new (red) locations, with a line for
