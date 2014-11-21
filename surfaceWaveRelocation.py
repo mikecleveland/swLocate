@@ -10,9 +10,8 @@
 	
 	14 Nov 2014 (KMC) - Plot of traveltime difference versus azimuth has been improved to 
 					show a plot of the correlation coefficients of each point and the 
-					initial and optimized cosine curve. I don't think this curves are 
-					right yet, they seem like they could fit the data better. Also, no 
-					weighting has been applied when optimizing these curves.
+					initial and optimized cosine curve. No weighting has been applied when 
+					optimizing these curves.
 					
 					Calculation of relative magnitudes should also be included.
 	
@@ -21,11 +20,12 @@
 					
 	19 Nov 2014 (KMC) - Added GMT plot (earlier than GMT5) and KML files (GoogleEarth) of 
 					new locations
+	
+	20 Nov 2014 (KMC) - Fixed a couple plotting bugs.
 					
 	To Be Done:
 		1. Apply weights in relocation
-		2. Make sure initial cosine curves are right
-		3. Relative magnitudes
+		2. Relative magnitudes
 
 '''
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
@@ -626,11 +626,12 @@ def matchComputeCC(dataStruct):
 		aEvent = h5py.File(aEvent, 'r')
 
 		## Add master event to (digital) log file ##
-		dataLog[aEventName] = {}
+		if aEventName not in dataLog:
+			dataLog[aEventName] = {}
 
-		## Loop over secondary events ##
+		## Loop over secondary events ##	
 		for bEvent in events[index:]:
-
+		
 			tempDDArray = []
 
 			bEventName = bEvent.split('/')[-1].split('.')[0][1:]
@@ -697,7 +698,7 @@ def matchComputeCC(dataStruct):
 			         resultValues = [weight,lag,nCC,unCC,unCC_i,powerA,powerB]
 			         dataLog = writeResults2Dict(dataLog,aEventName,bEventName, \
 			         				settings,aTrace,bTrace,aChan,resultValues)
-
+			         
 			         ## New Methods ##		             		             
 			         ok = shouldLink(aTrace,bTrace,nCC)
 			         if ok:
@@ -706,15 +707,19 @@ def matchComputeCC(dataStruct):
 			   ## Channel Level ##
 			   azLog = dataLog[aEventName][bEventName]['links']['azCover'][aChan]
 			   azLog['cover1'],azLog['cover2'] = calcAzCover(azLog['az'])
+			   dataLog[bEventName][aEventName]['links']['azCover'][aChan]['cover1'] = azLog['cover1']
+			   dataLog[bEventName][aEventName]['links']['azCover'][aChan]['cover2'] = azLog['cover2']
 
 			## B Event Level ##
 			azLog = dataLog[aEventName][bEventName]['links']['azCover']['total']
 			azLog['cover1'],azLog['cover2'] = calcAzCover(azLog['az'])
+			dataLog[bEventName][aEventName]['links']['azCover']['total']['cover1'] = azLog['cover1']
+			dataLog[bEventName][aEventName]['links']['azCover']['total']['cover2'] = azLog['cover2']
+			
 			links = dataLog[aEventName][bEventName]['links']['totalLinks']['total']
-
 			if (azLog['cover1'] >= settings['minAZ']) and (links >= settings['minLinks']):
 				ddArray = ddArray + tempDDArray
-
+			
 	ccLog.close()
 	
 	return dataLog,ddArray,myEventArray
@@ -999,7 +1004,7 @@ def writeResults2Dict(masterLog,aName,bName,settings,aTrace,bTrace,channel,resul
 	## Populate dictionary ##
 	aTempLog = populateResultsDict(aTempLog,aTrace,bTrace,weight,lag,normCC,unnormCC,powerA,powerB)
 	bTempLog = populateResultsDict(bTempLog,bTrace,aTrace,weight,-lag,normCC,unnormCC_i,powerA,powerB)
-	
+		
 	return masterLog	
 def populateResultsDict(log,aTrace,bTrace,weight,lag,normCC,unnormCC,powerA,powerB):
 
@@ -1235,6 +1240,7 @@ def plotAllCorrValues(log):
 					obsAz_A = []; obsLag_A = []
 					symbols = ['o','v','*']
 					index = 0
+					channelLegend = ''
 					for aChan in settings['channels']:
 						aChan = aChan.upper()
 						
@@ -1248,7 +1254,7 @@ def plotAllCorrValues(log):
 
 							obsAz_A += pick_x
 							obsLag_A += pick_y
-			
+										
 						else:
 							pick_x = []
 							pick_y = []
@@ -1266,6 +1272,8 @@ def plotAllCorrValues(log):
 							unpick_x = []
 							unpick_y = []
 							unpick_y2 = []
+
+						channelLegend += '%s: %s ' % (symbols[index],aChan)
 
 						ax1.plot(pick_x,pick_y,symbols[index],lw=2,color='red')
 						ax1.plot(unpick_x,unpick_y,symbols[index],lw=0.5,color='gray')
@@ -1290,11 +1298,12 @@ def plotAllCorrValues(log):
 						stats =  '%-17s Distance  Azimuth\n' % ('')
 						stats += '%-12s %5.1f km  %5.1f$^{\circ}$\n' % ('Initial',evDist,evAz)
 						stats += '%-8s %5.1f km  %5.1f$^{\circ}$\n' % \
-							('Optimal',amplitudeEst_P*settings['slowness'],phaseEst_P)
+							('Optimal',amplitudeEst_P/settings['slowness'],phaseEst_P)
 						stats += 'OT Shift    %5.1f s\n' % (biasEst_P)
 # 						stats += 'RMS Misfit  %0.1f s' % (0)
 						stats += 'gr=Inititial, blk=Optimal'
 # 						stats += 'gr=Init,blk=OptPick,gr=OptAll'
+						stats += '\n' + channelLegend
 						
 						bbox_props = dict(boxstyle="round", fc="w", ec="0.5", alpha=0.75)
 						ax1.text(.02,.98,stats,fontsize=8,bbox=bbox_props, \
@@ -1410,7 +1419,7 @@ def fitSine(azList,yList):
 	
 	(w,residuals,rank,sing_vals) = np.linalg.lstsq(A,b)
 	
-	phase = np.arctan2(w[1,0],w[0,0])*180.0/np.pi
+	phase = np.arctan2(w[1,0],w[0,0]) / deg_to_rad
 	amplitude = np.linalg.norm([w[0,0],w[1,0]],2)
 	shift = w[2,0]
 
@@ -1422,7 +1431,7 @@ def calcSineCurve(azRange,amplitude,phase,shift):
 	deg_to_rad = settings['deg_to_rad']
 	
 	xdata = azRange
-	ydata = amplitude * np.sin(deg_to_rad *(azRange - phase)) + shift
+	ydata = amplitude * np.sin(deg_to_rad * (azRange + phase)) + shift
 
 	return xdata,ydata
 	
@@ -2967,7 +2976,7 @@ workFlow = [1,2,3,6,7]
 global settings
 settings = dataStruct.settings
 
-# pdb.set_trace()
+pdb.set_trace()
 
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
 ##~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~##
